@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""
+Reproduce the rectangular SiO2 / Si3N4 waveguide from the pyFIMM README example
+(https://github.com/demisjohn/pyFIMM/blob/master/README.md) and plot the first
+five eigenmodes using ModeSolver_2026 (EMpy backend).
+"""
+
+from pathlib import Path
+import os
+import sys
+
+os.environ.setdefault("MPLBACKEND", "Agg")
+
+# Allow running without pip install (repo root on path)
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+import matplotlib.pyplot as plt
+
+from ModeSolver_2026 import Material, Slice, Waveguide
+import nk   # file `nk.py` in the same directory as this script
+
+#------------------------------------------------------------------------------
+
+wavelength_um = 1.550 # microns
+
+# README indices (dimensionless, as in pyFIMM snippet)
+#SiO = Material( nk.SiO2(wavelength_um) )
+#SiN = Material( nk.Si3N4(wavelength_um) )
+SiO = Material( 1.46 )
+SiN = Material( 2.00 )
+
+# 1-D Dimensions (microns), bottom to top
+clad = Slice(SiO(2.0))
+core = Slice(SiO(2.0 - 0.25/2) + SiN(0.25) + SiO(2.0 - 0.25/2))
+
+# 2-D Waveguide (microns), left to right
+WG = Waveguide(clad(3.0) + core(0.5) + clad(3.0))
+
+fig_n, ax_n = WG.plot_refractive_index_profile(
+    WG,
+    nx=1000,
+    ny=1000,
+    title="Refractive index n(x, y) — linear color scale (coolwarm)",
+    log_scale=False,
+)
+out_n = Path(__file__).resolve().parent / "Example1 - RIX profile.png"
+fig_n.savefig(out_n, dpi=300)
+#plt.close(fig_n)
+print(f"Wrote {out_n}")
+
+#WG.plot_RIX()
+
+# 1.55 µm is typical for Si photonics; README leaves wavelength unspecified.
+# Scalar finite-difference solver (EMpy SVFD) — fast and adequate for this demo.
+# Use WG.calc(..., vectorial=True) for full-vectorial VFDModeSolver (much slower).
+# Use WG.calc(..., solver="eme") for the vector FD path used in EMEPy/EME workflows.
+WG.calc(
+    wavelength_um=wavelength_um,
+    neigs=5,
+    nx=500,
+    ny=500,
+    boundary="0000",
+    solver="eme",
+    eme_accuracy=1e-8,
+)
+
+print(WG.neff_dataframe().to_string(index=False))
+
+fig, axes = plt.subplots(2, 3, figsize=(11, 7), constrained_layout=True)
+axes_flat = axes.ravel()
+for i in range(5):
+    m = WG.mode(i)
+    m.plot_intensity(ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}")
+axes_flat[5].axis("off")
+fig.suptitle(
+    "First five modes: pyFIMM README rectangular WG (SiO₂ clad, Si₃N₄ core segment)\n"
+    "ModeSolver_2026 · solver=\"eme\" (vector FD / EME-style cross-section)",
+    fontsize=11,
+)
+
+out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output.png"
+fig.savefig(out, dpi=150)
+print(f"Wrote {out}")
