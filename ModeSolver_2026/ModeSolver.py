@@ -96,6 +96,28 @@ class _StripChain:
         return _StripChain(self._strips + [other])
 
 
+def _waveguide_plot_kind(which: str | None) -> Literal["rix", "all"]:
+    """Map ``plot(which=...)`` to ``'rix'`` (index profile) or ``'all'`` (modes)."""
+    if which is None or (isinstance(which, str) and which.strip() == ""):
+        return "rix"
+    if not isinstance(which, str):
+        raise TypeError(
+            "Waveguide.plot(which=...): expected str or None, got "
+            f"{type(which).__name__}"
+        )
+    normalized = (
+        which.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    )
+    if normalized in ("rix", "refractiveindex"):
+        return "rix"
+    if normalized == "all":
+        return "all"
+    raise ValueError(
+        "Waveguide.plot(which=...): unknown "
+        f"{which!r}; use None (default), 'RIX', 'refractiveindex', or 'all'."
+    )
+
+
 class Waveguide:
     """
     2-D cross-section from left-to-right strips, pyFIMM ``Waveguide`` style.
@@ -103,6 +125,7 @@ class Waveguide:
     Example::
 
         WG = Waveguide(clad(3.0) + core(1.0) + clad(4.0))
+        WG.plot()
         WG.calc(wavelength_um=1.55, neigs=5)
         WG.plot("all")
         WG.mode(0).plot_intensity()
@@ -325,77 +348,6 @@ class Waveguide:
             vals = [complex(z) for z in self._solver.neff]
         return pd.DataFrame({"mode": range(len(vals)), "neff": vals})
 
-    def plot(
-        self,
-        which: Literal["all"],
-        *,
-        figsize: Tuple[float, float] = (11.0, 7.0),
-        suptitle: str | None = None,
-    ) -> Tuple["Figure", Any]:
-        """
-        Multi-panel mode field plots after :meth:`calc`.
-
-        ``which="all"`` reproduces the Example1 layout: a ``2×3`` grid of
-        intensity maps for the first five modes (fewer if fewer were computed),
-        with unused panels hidden.
-
-        Parameters
-        ----------
-        which
-            Currently only ``"all"`` is supported.
-        figsize
-            Figure size in inches (width, height).
-        suptitle
-            Optional figure title; a default is chosen from the solver backend.
-
-        Returns
-        -------
-        fig, axes
-            Matplotlib figure and ``2×3`` array of axes.
-        """
-        if which != "all":
-            raise ValueError(f"plot(which=...): unknown {which!r}; use 'all'.")
-
-        if self._solver is None:
-            raise RuntimeError("Call calc() before plot().")
-
-        import matplotlib.pyplot as plt
-
-        n_modes = int(self.neffs.size)
-        n_plot = min(5, n_modes)
-        if n_plot == 0:
-            raise RuntimeError("No modes to plot; increase neigs in calc().")
-
-        fig, axes = plt.subplots(2, 3, figsize=figsize, constrained_layout=True)
-        axes_flat = axes.ravel()
-        for i in range(n_plot):
-            m = self.mode(i)
-            m.plot_intensity(
-                ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}"
-            )
-        for j in range(n_plot, 6):
-            axes_flat[j].axis("off")
-
-        if suptitle is None:
-            backend = self._solver_backend
-            if backend == "eme":
-                sub = (
-                    f"First {n_plot} mode(s)\n"
-                    'ModeSolver_2026 · solver="eme" '
-                    "(vector FD / EME-style cross-section)"
-                )
-            else:
-                sub = (
-                    f"First {n_plot} mode(s)\n"
-                    'ModeSolver_2026 · solver="fd" '
-                    "(finite-difference cross-section)"
-                )
-            fig.suptitle(sub, fontsize=11)
-        else:
-            fig.suptitle(suptitle, fontsize=11)
-
-        return fig, axes
-
     def plot_refractive_index_profile(
         self,
         waveguide: Optional["Waveguide"] = None,  # allow user to pass a different WG obj.
@@ -403,6 +355,7 @@ class Waveguide:
         nx: int = 200,
         ny: int = 200,
         ax: Optional["Axes"] = None,
+        figsize: Tuple[float, float] | None = None,
         cmap: str = "coolwarm",
         log_scale: bool = False,
         title: str | None = None,
@@ -428,6 +381,9 @@ class Waveguide:
             Sample counts along x and y.
         ax
             Optional existing matplotlib axes.
+        figsize
+            Figure ``(width, height)`` in inches when ``ax`` is None. If omitted,
+            matplotlib's default size is used.
         cmap
             Matplotlib colormap name (Defaults to `coolwarm` for hot–cold).
         log_scale
@@ -455,7 +411,10 @@ class Waveguide:
         print(reprlib.repr( x ))
         
         if ax is None:
-            fig, ax = plt.subplots()
+            sub_kw: dict[str, Any] = {}
+            if figsize is not None:
+                sub_kw["figsize"] = figsize
+            fig, ax = plt.subplots(**sub_kw)
         else:
             fig = ax.figure
 
@@ -490,7 +449,117 @@ class Waveguide:
         ax.set_title(title or "Refractive index profile")
         fig.colorbar(cf, ax=ax, label=colorbar_label)
         return fig, ax
-    
+
+    def plot(
+        self,
+        which: str | None = None,
+        *,
+        waveguide: Optional["Waveguide"] = None,
+        nx: int = 200,
+        ny: int = 200,
+        ax: Optional["Axes"] = None,
+        figsize: Tuple[float, float] | None = None,
+        cmap: str = "coolwarm",
+        log_scale: bool = False,
+        title: str | None = None,
+        xlabel: str = "x (µm)",
+        ylabel: str = "y (µm)",
+        colorbar_label: str = "Refractive index n",
+        vmin: float | None = None,
+        vmax: float | None = None,
+        suptitle: str | None = None,
+    ) -> Tuple["Figure", Any]:
+        """
+        Plotting entry point: refractive index and/or solved modes.
+
+        * **Default** (``which`` omitted, ``None``, or ``""``): same as
+          :meth:`plot_refractive_index_profile` — 2D :math:`n(x,y)` cross-section.
+          Aliases: ``"RIX"``, ``"refractiveindex"`` (spacing and case ignored).
+        * ``which="all"``: after :meth:`calc`, a ``2×3`` grid of mode intensities
+          (first five modes, or fewer if fewer were computed).
+
+        Parameters
+        ----------
+        which
+            ``None`` / ``""`` / ``"RIX"`` / ``"refractiveindex"`` for the index map;
+            ``"all"`` for the multi-mode intensity figure.
+        waveguide, nx, ny, ax, figsize, cmap, log_scale, title, xlabel, ylabel,
+        colorbar_label, vmin, vmax
+            Passed to :meth:`plot_refractive_index_profile` for RIX plots.
+        suptitle
+            Used only for ``which="all"`` (figure super-title). If omitted, a
+            default is chosen from the solver backend.
+        figsize
+            For RIX: optional figure size when ``ax`` is None. For ``"all"``:
+            defaults to ``(11, 7)`` when omitted.
+
+        Returns
+        -------
+        fig, ax_or_axes
+            ``(fig, ax)`` for RIX; ``(fig, axes)`` with a ``2×3`` *axes* array for
+            ``"all"``.
+        """
+        kind = _waveguide_plot_kind(which)
+        if kind == "rix":
+            return self.plot_refractive_index_profile(
+                waveguide,
+                nx=nx,
+                ny=ny,
+                ax=ax,
+                figsize=figsize,
+                cmap=cmap,
+                log_scale=log_scale,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                colorbar_label=colorbar_label,
+                vmin=vmin,
+                vmax=vmax,
+            )
+
+        if self._solver is None:
+            raise RuntimeError('Call calc() before plot("all").')
+
+        import matplotlib.pyplot as plt
+
+        n_modes = int(self.neffs.size)
+        n_plot = min(5, n_modes)
+        if n_plot == 0:
+            raise RuntimeError("No modes to plot; increase neigs in calc().")
+
+        all_figsize = figsize if figsize is not None else (11.0, 7.0)
+        fig, axes = plt.subplots(
+            2, 3, figsize=all_figsize, constrained_layout=True
+        )
+        axes_flat = axes.ravel()
+        for i in range(n_plot):
+            m = self.mode(i)
+            m.plot_intensity(
+                ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}"
+            )
+        for j in range(n_plot, 6):
+            axes_flat[j].axis("off")
+
+        if suptitle is None:
+            backend = self._solver_backend
+            if backend == "eme":
+                sub = (
+                    f"First {n_plot} mode(s)\n"
+                    'ModeSolver_2026 · solver="eme" '
+                    "(vector FD / EME-style cross-section)"
+                )
+            else:
+                sub = (
+                    f"First {n_plot} mode(s)\n"
+                    'ModeSolver_2026 · solver="fd" '
+                    "(finite-difference cross-section)"
+                )
+            fig.suptitle(sub, fontsize=11)
+        else:
+            fig.suptitle(suptitle, fontsize=11)
+
+        return fig, axes
+
     # alias:
     plot_RIX = plot_refractive_index_profile
 

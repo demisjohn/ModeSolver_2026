@@ -36,15 +36,12 @@ core = Slice(SiO(2.0 - 0.25/2) + SiN(0.25) + SiO(2.0 - 0.25/2))
 # 2-D Waveguide (microns), left to right
 WG = Waveguide(clad(3.0) + core(0.5) + clad(3.0))
 
-fig_n, ax_n = WG.plot_refractive_index_profile(
-    WG,
-    nx=1000,
-    ny=1000,
+# plot refractive index profile
+fig_n, ax_n = WG.plot(
     title="Refractive index n(x, y) — linear color scale (coolwarm)",
-    log_scale=False,
 )
 out_n = Path(__file__).resolve().parent / "Example1 - RIX profile.png"
-fig_n.savefig(out_n, dpi=300)
+fig_n.savefig(out_n)
 #plt.close(fig_n)
 print(f"Wrote {out_n}")
 
@@ -52,7 +49,7 @@ print(f"Wrote {out_n}")
 
 # 1.55 µm is typical for Si photonics; README leaves wavelength unspecified.
 # Scalar finite-difference solver (EMpy SVFD) — fast and adequate for this demo.
-# Use WG.calc(..., vectorial=True) for full-vectorial VFDModeSolver (much slower).
+# Use WG.calc(..., vectorial=True) for full-vectorial VFDModeSolver (default, much slower).
 # Use WG.calc(..., solver="eme") for the vector FD path used in EMEPy/EME workflows.
 WG.calc(
     wavelength_um=wavelength_um,
@@ -60,14 +57,14 @@ WG.calc(
     nx=500,
     ny=500,
     boundary="0000",
-    # solver="eme",
-    eme_accuracy=1e-8,
+    solver="eme",
+    eme_accuracy=1e-6,
 )
 
 print(WG.neff_dataframe().to_string(index=False))
 
 fig, ax = WG.plot("all")
 
-out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output.png"
+out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output EME.png"
 fig.savefig(out, dpi=150)
 print(f"Wrote {out}")

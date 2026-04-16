@@ -28,8 +28,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-import matplotlib.pyplot as plt
-
 from ModeSolver_2026 import Material, Slice, Waveguide
 import nk   # file `nk.py` in the same directory as this script
 
@@ -55,14 +53,13 @@ core_mid =  Slice(    SiO(2.0) + NOA(0.100) + Water(0.200) + NOA(0.100) + SiO(si
 # 2-D Waveguide (microns) - horizontal concat from left-to-right
 WG = Waveguide(clad(3.0) + core_outer(0.5) + core_mid(1.0) + core_outer(0.5) + clad(3.0))
 
-fig_rix, ax_rix = WG.plot_refractive_index_profile(WG)
+fig_rix, ax_rix = WG.plot()
 fig_rix.show()
 
 filedate = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S.%f')[:-3]}"
 out = Path(__file__).resolve().parent / f"{fileout + ' - RIX - ' + filedate}.png"
 fig_rix.savefig(out, dpi=150)
 print(f"Wrote {out}")
-#plt.close(fig_rix)
 
 # 1.55 µm is typical for Si photonics; README leaves wavelength unspecified.
 # Scalar finite-difference solver (EMpy SVFD) — fast and adequate for this demo.
@@ -72,17 +69,7 @@ WG.calc(wavelength_um=1.55, neigs=5, nx=500, ny=500, boundary="0000")
 
 print(WG.neff_dataframe().to_string(index=False))
 
-fig, axes = plt.subplots(2, 3, figsize=(11, 7), constrained_layout=True)
-axes_flat = axes.ravel()
-for i in range(5):
-    m = WG.mode(i)
-    m.plot_intensity(ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}")
-axes_flat[5].axis("off")
-fig.suptitle(
-    fileout,
-    fontsize=11,
-)
-
+fig, _ = WG.plot("all", suptitle=fileout)
 
 out = Path(__file__).resolve().parent / f"{fileout + ' - Modes - ' + filedate}.png"
 fig.savefig(out, dpi=150)
