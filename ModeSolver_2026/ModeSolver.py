@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Literal, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -104,6 +104,7 @@ class Waveguide:
 
         WG = Waveguide(clad(3.0) + core(1.0) + clad(4.0))
         WG.calc(wavelength_um=1.55, neigs=5)
+        WG.plot("all")
         WG.mode(0).plot_intensity()
     """
 
@@ -323,8 +324,78 @@ class Waveguide:
         else:
             vals = [complex(z) for z in self._solver.neff]
         return pd.DataFrame({"mode": range(len(vals)), "neff": vals})
-    
-    
+
+    def plot(
+        self,
+        which: Literal["all"],
+        *,
+        figsize: Tuple[float, float] = (11.0, 7.0),
+        suptitle: str | None = None,
+    ) -> Tuple["Figure", Any]:
+        """
+        Multi-panel mode field plots after :meth:`calc`.
+
+        ``which="all"`` reproduces the Example1 layout: a ``2×3`` grid of
+        intensity maps for the first five modes (fewer if fewer were computed),
+        with unused panels hidden.
+
+        Parameters
+        ----------
+        which
+            Currently only ``"all"`` is supported.
+        figsize
+            Figure size in inches (width, height).
+        suptitle
+            Optional figure title; a default is chosen from the solver backend.
+
+        Returns
+        -------
+        fig, axes
+            Matplotlib figure and ``2×3`` array of axes.
+        """
+        if which != "all":
+            raise ValueError(f"plot(which=...): unknown {which!r}; use 'all'.")
+
+        if self._solver is None:
+            raise RuntimeError("Call calc() before plot().")
+
+        import matplotlib.pyplot as plt
+
+        n_modes = int(self.neffs.size)
+        n_plot = min(5, n_modes)
+        if n_plot == 0:
+            raise RuntimeError("No modes to plot; increase neigs in calc().")
+
+        fig, axes = plt.subplots(2, 3, figsize=figsize, constrained_layout=True)
+        axes_flat = axes.ravel()
+        for i in range(n_plot):
+            m = self.mode(i)
+            m.plot_intensity(
+                ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}"
+            )
+        for j in range(n_plot, 6):
+            axes_flat[j].axis("off")
+
+        if suptitle is None:
+            backend = self._solver_backend
+            if backend == "eme":
+                sub = (
+                    f"First {n_plot} mode(s)\n"
+                    'ModeSolver_2026 · solver="eme" '
+                    "(vector FD / EME-style cross-section)"
+                )
+            else:
+                sub = (
+                    f"First {n_plot} mode(s)\n"
+                    'ModeSolver_2026 · solver="fd" '
+                    "(finite-difference cross-section)"
+                )
+            fig.suptitle(sub, fontsize=11)
+        else:
+            fig.suptitle(suptitle, fontsize=11)
+
+        return fig, axes
+
     def plot_refractive_index_profile(
         self,
         waveguide: Optional["Waveguide"] = None,  # allow user to pass a different WG obj.

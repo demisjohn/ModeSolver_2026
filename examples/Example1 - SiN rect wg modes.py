@@ -16,8 +16,6 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-import matplotlib.pyplot as plt
-
 from ModeSolver_2026 import Material, Slice, Waveguide
 import nk   # file `nk.py` in the same directory as this script
 
@@ -68,18 +66,7 @@ WG.calc(
 
 print(WG.neff_dataframe().to_string(index=False))
 
-# Plot the modes:
-fig, axes = plt.subplots(2, 3, figsize=(11, 7), constrained_layout=True)
-axes_flat = axes.ravel()
-for i in range(5):
-    m = WG.mode(i)
-    m.plot_intensity(ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}")
-axes_flat[5].axis("off")
-fig.suptitle(
-    "First five modes: pyFIMM README rectangular WG (SiO₂ clad, Si₃N₄ core segment)\n"
-    "ModeSolver_2026 · solver=\"eme\" (vector FD / EME-style cross-section)",
-    fontsize=11,
-)
+fig, ax = WG.plot("all")
 
 out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output.png"
 fig.savefig(out, dpi=150)
