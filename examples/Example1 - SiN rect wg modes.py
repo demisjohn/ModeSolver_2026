@@ -62,12 +62,13 @@ WG.calc(
     nx=500,
     ny=500,
     boundary="0000",
-    solver="eme",
+    # solver="eme",
     eme_accuracy=1e-8,
 )
 
 print(WG.neff_dataframe().to_string(index=False))
 
+# Plot the modes:
 fig, axes = plt.subplots(2, 3, figsize=(11, 7), constrained_layout=True)
 axes_flat = axes.ravel()
 for i in range(5):
