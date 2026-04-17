@@ -48,23 +48,23 @@ print(f"Wrote {out_n}")
 #WG.plot_RIX()
 
 # 1.55 µm is typical for Si photonics; README leaves wavelength unspecified.
-# Scalar finite-difference solver (EMpy SVFD) — fast and adequate for this demo.
-# Use WG.calc(..., vectorial=True) for full-vectorial VFDModeSolver (default, much slower).
-# Use WG.calc(..., solver="eme") for the vector FD path used in EMEPy/EME workflows.
+# Default ``solver='SVFD'`` (EMpy semi-vectorial FD) — fast for this demo.
+# Use ``solver='VFD'`` or ``solver='vectorial'`` for full EMpy VFDModeSolver (slower).
+# Use ``solver='eme'`` for EMEpy's MSEMpy (requires ``pip install emepy``).
 WG.calc(
     wavelength_um=wavelength_um,
     neigs=5,
     nx=500,
     ny=500,
     boundary="0000",
-    solver="eme",
-    eme_accuracy=1e-6,
+    # solver="eme",  # optional: EMEpy MSEMpy (requires ``pip install emepy``)
+    # tol=1e-6,
 )
 
 print(WG.neff_dataframe().to_string(index=False))
 
 fig, ax = WG.plot("all")
 
-out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output EME.png"
+out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output.png"
 fig.savefig(out, dpi=150)
 print(f"Wrote {out}")

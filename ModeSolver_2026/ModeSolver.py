@@ -10,7 +10,15 @@ import numpy as np
 import EMpy.utils
 from EMpy.modesolvers.FD import SVFDModeSolver, VFDModeSolver
 
-from .eme_emepy import solve_cross_section_eme
+from .eme_emepy import solve_cross_section_emepy_msempy
+from .pml import (
+    boundary_for_empy,
+    extend_vertex_axes,
+    has_pml,
+    make_pml_epsfunc,
+    normalize_pml_cells,
+    validate_calc_boundary,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -96,6 +104,30 @@ class _StripChain:
         return _StripChain(self._strips + [other])
 
 
+def _normalize_calc_solver(solver: str) -> Literal["svfd", "vfd", "eme"]:
+    """
+    Map ``calc(solver=...)`` to an internal backend key.
+
+    SVFD (default): ``"SVFD"``, ``"EMpy-SVFD"``, ``"semi-vectorial"``, ``"fd"``.
+    VFD: ``"VFD"``, ``"EMpy-VFD"``, ``"vectorial"``.
+    EMEpy: ``"eme"``, ``"EMEpy"``, ``"eigenmode expansion"`` (spacing ignored).
+    """
+    s = (
+        str(solver).strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+    )
+    if s in ("svfd", "empysvfd", "semivectorial", "fd"):
+        return "svfd"
+    if s in ("vfd", "empyvfd", "vectorial", "fullvectorial"):
+        return "vfd"
+    if s in ("eme", "emepy", "eigenmodeexpansion"):
+        return "eme"
+    raise ValueError(
+        f"Unknown calc(solver={solver!r}). "
+        "Use 'SVFD' (default), 'EMpy-SVFD', 'semi-vectorial', 'fd'; "
+        "'VFD', 'EMpy-VFD', 'vectorial'; or 'eme', 'EMEpy', 'eigenmode expansion'."
+    )
+
+
 def _waveguide_plot_kind(which: str | None) -> Literal["rix", "all"]:
     """Map ``plot(which=...)`` to ``'rix'`` (index profile) or ``'all'`` (modes)."""
     if which is None or (isinstance(which, str) and which.strip() == ""):
@@ -138,7 +170,7 @@ class Waveguide:
             self._strips = [layout]
         self._solver: SVFDModeSolver | VFDModeSolver | None = None
         self._vectorial: bool = False
-        self._solver_backend: Literal["fd", "eme"] = "fd"
+        self._solver_backend: Literal["svfd", "vfd", "eme"] = "svfd"
         self._wl_um: float | None = None
         self._x: np.ndarray | None = None
         self._y: np.ndarray | None = None
@@ -168,6 +200,15 @@ class Waveguide:
                 return st.stack.slabs[-1].n
             x0 = x1
         return self._strips[-1].stack.slabs[-1].n
+
+    def _n_at_bounded(self, x_um: float, y_um: float) -> float:
+        """Refractive index with (x,y) clamped to the physical bounding box (for PML padding)."""
+        w = self._width_um()
+        h = self._height_um()
+        return self._n_at(
+            float(np.clip(x_um, 0.0, w)),
+            float(np.clip(y_um, 0.0, h)),
+        )
 
     def refractive_index_grid(
         self, 
@@ -218,25 +259,28 @@ class Waveguide:
         nx: int = 120,
         ny: int = 120,
         boundary: str = "0000",
-        vectorial: bool = False,
         fd_method: str = "scalar",
         index_guess: float | None = None,
         tol: float = 0.0,
-        solver: Literal["fd", "eme"] = "fd",
-        eme_accuracy: float = 1e-8,
+        solver: str = "SVFD",
+        pml_cells: int | tuple[int, int, int, int] = 10,
+        pml_m: int = 3,
+        pml_R: float = 1e-8,
+        pml_sigma_max_geom: float | None = None,
     ) -> "Waveguide":
         """
         Run a mode solver on the cross-section.
 
-        ``solver="fd"`` (default) uses EMpy finite-difference solvers. By default
-        uses :class:`SVFDModeSolver` (scalar or ``Ex`` / ``Ey`` semi-vectorial),
-        which is much faster than the full-vectorial :class:`VFDModeSolver`.
-        Set ``vectorial=True`` for vectorial modes and full E/H components (see EMpy).
+        The ``solver`` string selects the backend (case- and separator-insensitive):
 
-        ``solver="eme"`` uses the same vector finite-difference engine as the
-        EMEPy ``MSEMpy`` cross-section path (full E/H via :class:`VFDModeSolver`),
-        suitable for eigenmode-expansion workflows, without importing the optional
-        ``emepy`` package.
+        * **SVFD** (default): ElectromagneticPython :class:`SVFDModeSolver`
+          (scalar or ``Ex`` / ``Ey`` semi-vectorial). Synonyms: ``"EMpy-SVFD"``,
+          ``"semi-vectorial"``, ``"fd"``.
+        * **VFD**: full-vectorial :class:`VFDModeSolver` (all field components).
+          Synonyms: ``"EMpy-VFD"``, ``"vectorial"``.
+        * **eme**: EMEpy's :class:`emepy.fd.MSEMpy` transverse mode solver (vector
+          FD as used in EMEpy workflows; requires the ``emepy`` package). Synonyms:
+          ``"EMEpy"``, ``"eigenmode expansion"``.
 
         Parameters
         ----------
@@ -245,62 +289,102 @@ class Waveguide:
         neigs
             Number of eigenmodes to compute.
         nx, ny
-            Vertex counts along the simulation window edges.
+            Vertex counts along the **physical** window ``[0, width] × [0, height]``.
+            If any boundary is ``'P'``, extra vertices are appended outside that
+            window for the PML; interior spacing matches ``linspace`` on the box.
         boundary
-            Per EMpy: four chars N,S,E,W each ``'0'``, ``'S'``, or ``'A'``.  See EMpy.modesolves.FD documentation.  Pasted here: The following options are available:
-           'A' - Hx is antisymmetric, Hy is symmetric.
-           'S' - Hx is symmetric and, Hy is antisymmetric.
-           '0' - Hx and Hy are zero immediately outside of the boundary.
-        vectorial
-            If True, use full vectorial solver (slower, more accurate) via :class:`VFDModeSolver`. Defaults to False. Ignored when ``solver="eme"``.
+            Four characters ``N,S,E,W`` (north, south, east, west). Each may be:
+
+            * ``'0'`` — Hx and Hy zero immediately outside the boundary (EMpy).
+            * ``'S'`` / ``'A'`` — symmetry / antisymmetry (EMpy); see EMpy FD docs.
+            * ``'P'`` — perfectly matched layer: absorption via complex
+              :math:`\\varepsilon` on padded cells; EMpy still sees outer ``'0'`` on
+              that edge. Example: ``"PP00"`` is PML on north and south only.
+
+            Case-insensitive. ``'P'`` is only implemented via the complex-ε
+            preprocessor (same path for SVFD, VFD, and ``solver='eme'``).
         fd_method
-            For ``vectorial=False`` and ``solver="fd"``: ``'scalar'``, ``'Ex'``, or ``'Ey'`` (SVFD).
+            For ``solver`` SVFD only: ``'scalar'``, ``'Ex'``, or ``'Ey'``.
         index_guess
-            For vectorial or EME solver: sigma shift; default uses max index.
+            For VFD only: optional sigma shift for the sparse eigensolver (default
+            uses max index minus a small offset).
         tol
-            Eigenvalue tolerance for FD solvers (``solver="fd"``).
+            Eigenvalue tolerance for SVFD, VFD, and EMEpy ``MSEMpy`` (``accuracy``).
         solver
-            ``"fd"`` for semi-vectorial or vectorial FD as controlled by ``vectorial``;
-            ``"eme"`` for vector FD with ``eme_accuracy``.
-        eme_accuracy
-            Eigenvalue tolerance when ``solver="eme"`` (passed to :class:`VFDModeSolver`).
+            ``"SVFD"``, ``"VFD"``, or ``"eme"`` (plus synonyms above).
+        pml_cells
+            When any side uses ``'P'``: integer (same count on every ``P`` side) or
+            ``(N, S, E, W)`` integer tuple for PML thickness in **FD cells** on each
+            ``P`` side (minimum 1 cell per active ``P``).
+        pml_m
+            Polynomial grade :math:`m` in :math:`\\sigma(u) \\propto (u/d)^m`.
+        pml_R
+            Target reflectivity :math:`R` for the default :math:`\\sigma_{\\max}` choice.
+        pml_sigma_max_geom
+            If set, overrides the geometric :math:`\\sigma_{\\max}` (in ``1/m`` at full
+            depth) for every active PML slab; otherwise use the default from
+            :math:`(m+1)/(2d)\\ln(1/R)` with physical thickness :math:`d`.
         """
         w = self._width_um()
         h = self._height_um()
-        x = np.linspace(0.0, w, nx)
-        y = np.linspace(0.0, h, ny)
+        b_upper = validate_calc_boundary(boundary)
+        b_empy = boundary_for_empy(b_upper)
+
+        if has_pml(b_upper):
+            pml_nswe = normalize_pml_cells(pml_cells, b_upper)
+            x, y, meta = extend_vertex_axes(w, h, nx, ny, b_upper, pml_nswe)
+            epsfunc = make_pml_epsfunc(
+                self._n_at_bounded,
+                w,
+                h,
+                wavelength_um,
+                b_upper,
+                meta["d_north_um"],
+                meta["d_south_um"],
+                meta["d_east_um"],
+                meta["d_west_um"],
+                m=pml_m,
+                R=pml_R,
+                sigma_max_geom_override=pml_sigma_max_geom,
+            )
+        else:
+            x = np.linspace(0.0, w, nx)
+            y = np.linspace(0.0, h, ny)
+            epsfunc = self._make_epsfunc()
+
         nmax = max(slab.n for st in self._strips for slab in st.stack.slabs)
         guess = index_guess if index_guess is not None else nmax - 1e-3
 
+        kind = _normalize_calc_solver(solver)
         print("Waveguide.calc(): Calculating Modes...")
-        if solver == "eme":
-            result = solve_cross_section_eme(
+        if kind == "eme":
+            result = solve_cross_section_emepy_msempy(
                 self,
                 wavelength_um=wavelength_um,
                 neigs=neigs,
-                nx=nx,
-                ny=ny,
-                boundary=boundary,
-                eme_accuracy=eme_accuracy,
-                index_guess=index_guess,
+                x=x,
+                y=y,
+                boundary=b_empy,
+                tol=tol,
+                epsfunc=epsfunc,
             )
             self._solver = result.solver
             self._vectorial = True
             self._solver_backend = "eme"
-        elif vectorial:
-            solver = VFDModeSolver(
-                wavelength_um, x, y, self._make_epsfunc(), boundary
+        elif kind == "vfd":
+            fd_solver = VFDModeSolver(
+                wavelength_um, x, y, epsfunc, b_empy
             ).solve(neigs=neigs, tol=tol, guess=guess)
-            self._solver = solver
+            self._solver = fd_solver
             self._vectorial = True
-            self._solver_backend = "fd"
+            self._solver_backend = "vfd"
         else:
-            solver = SVFDModeSolver(
-                wavelength_um, x, y, self._make_epsfunc(), boundary, method=fd_method
+            fd_solver = SVFDModeSolver(
+                wavelength_um, x, y, epsfunc, b_empy, method=fd_method
             ).solve(neigs=neigs, tol=tol)
-            self._solver = solver
+            self._solver = fd_solver
             self._vectorial = False
-            self._solver_backend = "fd"
+            self._solver_backend = "svfd"
 
         self._wl_um = wavelength_um
         self._x = x
@@ -545,14 +629,17 @@ class Waveguide:
             if backend == "eme":
                 sub = (
                     f"First {n_plot} mode(s)\n"
-                    'ModeSolver_2026 · solver="eme" '
-                    "(vector FD / EME-style cross-section)"
+                    'ModeSolver_2026 · solver="eme" (EMEpy MSEMpy)'
+                )
+            elif backend == "vfd":
+                sub = (
+                    f"First {n_plot} mode(s)\n"
+                    'ModeSolver_2026 · solver="VFD" (EMPy VFDModeSolver)'
                 )
             else:
                 sub = (
                     f"First {n_plot} mode(s)\n"
-                    'ModeSolver_2026 · solver="fd" '
-                    "(finite-difference cross-section)"
+                    'ModeSolver_2026 · solver="SVFD" (EMPy SVFDModeSolver)'
                 )
             fig.suptitle(sub, fontsize=11)
         else:

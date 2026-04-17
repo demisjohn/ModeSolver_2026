@@ -13,8 +13,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+# EMpy_gpu (via emepy FD) imports numpy.testing.Tester (removed in NumPy 2.0).
+# Pin NumPy/SciPy so third-party packages stay unmodified.
 eme = [
     "emepy>=1.2",
+    "numpy>=1.24,<1.25",
+    "scipy>=1.10,<1.12",
+    "pandas>=2,<3",
 ]
 
 [build-system]

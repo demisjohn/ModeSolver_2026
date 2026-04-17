@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
+
+# NumPy 1.x compatibility: ElectromagneticPython 2.x uses ``numpy.trapezoid`` (NumPy 2+).
+# The ``[eme]`` extra pins NumPy 1.24.x for unmodified ``EMpy_gpu`` (``numpy.testing.Tester``).
+if not hasattr(np, "trapezoid"):
+    np.trapezoid = np.trapz  # type: ignore[attr-defined, assignment]
+
 """
 ModeSolver_2026 — pyFIMM-like geometry API with EMpy mode solving.
 
@@ -7,11 +14,10 @@ Backend: `ElectromagneticPython` (EMpy) finite-difference mode solvers
 (:class:`SVFDModeSolver` by default, optional :class:`VFDModeSolver`), see
 https://github.com/lbolla/EMpy .
 
-Optional EME-style cross-section modes: pass ``solver="eme"`` to
-:class:`~ModeSolver_2026.ModeSolver.Waveguide.calc` to use the vector FD path
-aligned with EMEPy's ``MSEMpy`` engine (same EMpy VFD kernel; no ``emepy`` import
-required). To install the upstream ``emepy`` package for its full EME stack, use
-``pip install mode-solver-2026[eme]`` (optional; may need extra dependencies).
+Optional EMEpy cross-section modes: pass ``solver="eme"`` (or ``"EMEpy"``) to
+:class:`~ModeSolver_2026.ModeSolver.Waveguide.calc` to use EMEpy's ``MSEMpy``
+transverse solver. That path requires the ``emepy`` package and its dependencies
+(see ``pip install mode-solver-2026[eme]`` or the `emepy` project README).
 """
 
 from .ModeSolver import Material, Slice, Waveguide

@@ -1,4 +1,4 @@
-"""Smoke test for solver=\"eme\" (vector FD / EME-style path)."""
+"""Smoke test for ``solver='eme'`` (EMEpy ``MSEMpy``), when ``emepy`` imports."""
 
 from __future__ import annotations
 
@@ -18,7 +18,13 @@ def simple_wg():
 
 
 def test_calc_solver_eme_neffs_and_modes(simple_wg):
-    # Small grid and loose eigensolver tolerance keep CI fast; full accuracy is for user runs.
+    try:
+        from emepy.fd import MSEMpy  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "emepy.fd (MSEMpy) is not importable; install emepy and its dependencies."
+        )
+    # Small grid and loose eigensolver tolerance keep CI fast when emepy is present.
     simple_wg.calc(
         wavelength_um=1.55,
         neigs=1,
@@ -26,10 +32,30 @@ def test_calc_solver_eme_neffs_and_modes(simple_wg):
         ny=16,
         boundary="0000",
         solver="eme",
-        eme_accuracy=0.05,
+        tol=0.05,
     )
+    assert simple_wg._solver_backend == "eme"
     n = simple_wg.neffs
     assert n.shape == (1,)
     assert np.all(np.isfinite(n))
     m0 = simple_wg.mode(0)
     assert np.isfinite(m0.neff.real) or np.isfinite(m0.neff.imag)
+
+
+def test_calc_svfd_default_and_fd_synonym(simple_wg):
+    simple_wg.calc(wavelength_um=1.55, neigs=1, nx=14, ny=14)
+    assert simple_wg._solver_backend == "svfd"
+    simple_wg.calc(wavelength_um=1.55, neigs=1, nx=14, ny=14, solver="fd")
+    assert simple_wg._solver_backend == "svfd"
+
+
+def test_calc_vfd_synonym(simple_wg):
+    simple_wg.calc(
+        wavelength_um=1.55,
+        neigs=1,
+        nx=14,
+        ny=14,
+        solver="vectorial",
+        tol=0.05,
+    )
+    assert simple_wg._solver_backend == "vfd"
