@@ -33,6 +33,23 @@ def boundary_for_empy(boundary_upper: str) -> str:
 
 
 def has_pml(boundary_upper: str) -> bool:
+    """
+    Check if any edge uses PML (letter 'P' in boundary string).
+
+    Parameters
+    ----------
+    boundary_upper : str
+        Four-character boundary string in uppercase (from validate_calc_boundary).
+
+    Returns
+    -------
+    bool
+        True if any character is 'P', indicating PML on at least one edge.
+    
+    Notes
+    -----
+    Used by calc() to branch between real and complex permittivity paths.
+    """
     return "P" in boundary_upper
 
 
@@ -112,6 +129,31 @@ def extend_vertex_axes(
 
 
 def _sigma_max_geom(d_m: float, m: int, R: float) -> float:
+    """
+    Compute default geometric conductivity σ_max for PML grading.
+
+    Internal helper implementing the formula σ_max = (m+1)/(2d) * ln(1/R)
+    for target reflectivity R at PML thickness d.
+
+    Parameters
+    ----------
+    d_m : float
+        PML thickness in meters (not microns).
+    m : int
+        Polynomial grading order.
+    R : float
+        Target reflectivity (e.g., 1e-8 for low reflection).
+
+    Returns
+    -------
+    float
+        Geometric conductivity σ_max in 1/m, or 0.0 if d_m <= 0.
+    
+    Notes
+    -----
+    Not part of the public API. Override via pml_sigma_max_geom parameter
+    in make_pml_epsfunc or Waveguide.calc() if manual tuning is needed.
+    """
     if d_m <= 0.0:
         return 0.0
     return (m + 1.0) / (2.0 * d_m) * np.log(1.0 / R)
@@ -161,6 +203,33 @@ def make_pml_epsfunc(
     b = boundary_upper
 
     def epsfunc(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """
+        Compute complex relative permittivity with PML absorption.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1-D array of x-coordinates in microns (EMpy cell centers).
+        y : np.ndarray
+            1-D array of y-coordinates in microns (EMpy cell centers).
+
+        Returns
+        -------
+        np.ndarray
+            Complex relative permittivity ε_r = (n₀ √(s_x s_y))² with shape
+            (x.size, y.size), dtype=complex128.
+
+        Raises
+        ------
+        ValueError
+            If x or y is not 1-dimensional.
+        
+        Notes
+        -----
+        Coordinates outside the physical window [0, w]×[0, h] inherit edge
+        cladding index via n_at_bounded, with complex stretching applied
+        based on depth into each active PML slab.
+        """
         if x.ndim != 1 or y.ndim != 1:
             raise ValueError("EMpy passes 1D center coordinates for x and y.")
         out = np.empty((x.size, y.size), dtype=np.complex128)

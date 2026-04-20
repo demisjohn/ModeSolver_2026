@@ -33,6 +33,19 @@ class _Slab:
     thickness_um: float
 
     def __add__(self, other: Union["_Slab", "_SlabStack"]) -> "_SlabStack":
+        """
+        Concatenate this slab with another slab or stack to build vertical layers.
+
+        Parameters
+        ----------
+        other : _Slab or _SlabStack
+            Another slab or existing stack to append below this slab.
+
+        Returns
+        -------
+        _SlabStack
+            A new stack containing this slab followed by the other slab(s).
+        """
         if isinstance(other, _SlabStack):
             return _SlabStack((self,) + other.slabs)
         return _SlabStack((self, other))
@@ -43,6 +56,19 @@ class _SlabStack:
     slabs: tuple
 
     def __add__(self, other: Union[_Slab, "_SlabStack"]) -> "_SlabStack":
+        """
+        Append a slab or merge another stack into this vertical stack.
+
+        Parameters
+        ----------
+        other : _Slab or _SlabStack
+            Slab or stack to append at the top of this stack.
+
+        Returns
+        -------
+        _SlabStack
+            A new stack containing all layers in bottom-to-top order.
+        """
         if isinstance(other, _Slab):
             return _SlabStack(self.slabs + (other,))
         return _SlabStack(self.slabs + other.slabs)
@@ -52,13 +78,49 @@ class Material:
     """Isotropic material with refractive index ``n`` (dimensionless)."""
 
     def __init__(self, n: float) -> None:
+        """
+        Initialize an optical material with a specified refractive index.
+
+        Parameters
+        ----------
+        n : float
+            Refractive index (dimensionless) at the wavelength of interest.
+        """
         self.n = float(n)
 
     def __call__(self, thickness_um: float) -> _Slab:
+        """
+        Create a horizontal slab layer with this material.
+
+        Parameters
+        ----------
+        thickness_um : float
+            Layer thickness in microns (positive value expected).
+
+        Returns
+        -------
+        _Slab
+            A slab with this material's index and specified thickness.
+        """
         return _Slab(self.n, float(thickness_um))
 
 
 def _as_stack(vertical: Union[_Slab, _SlabStack]) -> _SlabStack:
+    """
+    Normalize a single slab or existing stack to a _SlabStack.
+
+    Helper function to ensure vertical geometry is always represented as a stack.
+
+    Parameters
+    ----------
+    vertical : _Slab or _SlabStack
+        Single slab or existing stack of slabs.
+
+    Returns
+    -------
+    _SlabStack
+        The input stack if already a _SlabStack, or a new single-element stack.
+    """
     if isinstance(vertical, _SlabStack):
         return vertical
     return _SlabStack((vertical,))
@@ -72,6 +134,19 @@ class _Strip:
     width_um: float
 
     def __add__(self, other: Union["_Strip", "_StripChain"]) -> "_StripChain":
+        """
+        Place another strip to the right of this strip to build horizontal layout.
+
+        Parameters
+        ----------
+        other : _Strip or _StripChain
+            Strip or chain to append to the right (larger x) of this strip.
+
+        Returns
+        -------
+        _StripChain
+            A new chain containing strips in left-to-right order.
+        """
         if isinstance(other, _StripChain):
             return _StripChain([self] + other._strips)
         return _StripChain([self, other])
@@ -88,17 +163,59 @@ class Slice:
     """
 
     def __init__(self, vertical: Union[_Slab, _SlabStack]) -> None:
+        """
+        Initialize a vertical slice of materials (bottom to top).
+
+        Parameters
+        ----------
+        vertical : _Slab or _SlabStack
+            Vertical material composition for this slice column.
+        """
         self._stack = _as_stack(vertical)
 
     def __call__(self, width_um: float) -> _Strip:
+        """
+        Assign a horizontal width to this slice to create a strip.
+
+        Parameters
+        ----------
+        width_um : float
+            Width in microns along the x-axis.
+
+        Returns
+        -------
+        _Strip
+            A strip with this slice's vertical composition and specified width.
+        """
         return _Strip(self._stack, float(width_um))
 
 
 class _StripChain:
     def __init__(self, strips: Sequence[_Strip]) -> None:
+        """
+        Initialize a horizontal chain of strips forming a waveguide layout.
+
+        Parameters
+        ----------
+        strips : Sequence[_Strip]
+            Ordered sequence of strips from left to right.
+        """
         self._strips = list(strips)
 
     def __add__(self, other: Union[_Strip, "_StripChain"]) -> "_StripChain":
+        """
+        Append a strip or concatenate another chain to the right.
+
+        Parameters
+        ----------
+        other : _Strip or _StripChain
+            Strip or chain to place at the right end of this chain.
+
+        Returns
+        -------
+        _StripChain
+            A new chain with all strips in left-to-right order.
+        """
         if isinstance(other, _StripChain):
             return _StripChain(self._strips + other._strips)
         return _StripChain(self._strips + [other])
@@ -164,6 +281,19 @@ class Waveguide:
     """
 
     def __init__(self, layout: Union[_Strip, _StripChain]) -> None:
+        """
+        Initialize a 2-D waveguide cross-section from a horizontal layout.
+
+        Parameters
+        ----------
+        layout : _Strip or _StripChain
+            Single strip or chain of strips defining the left-to-right geometry.
+        
+        Notes
+        -----
+        Internal state includes solver results (_solver), backend type, wavelength,
+        and grid coordinates, all initialized to None until calc() is called.
+        """
         if isinstance(layout, _StripChain):
             self._strips = list(layout._strips)
         else:
@@ -176,11 +306,27 @@ class Waveguide:
         self._y: np.ndarray | None = None
 
     def _height_um(self) -> float:
+        """
+        Compute the maximum vertical extent of the waveguide cross-section.
+
+        Returns
+        -------
+        float
+            Height in microns (tallest strip's total thickness).
+        """
         return max(
             sum(slab.thickness_um for slab in st.stack.slabs) for st in self._strips
         )
 
     def _width_um(self) -> float:
+        """
+        Compute the total horizontal extent of the waveguide cross-section.
+
+        Returns
+        -------
+        float
+            Width in microns (sum of all strip widths).
+        """
         return sum(st.width_um for st in self._strips)
 
     def _n_at(self, x_um: float, y_um: float) -> float:
@@ -241,7 +387,40 @@ class Waveguide:
         return x, y, n
 
     def _make_epsfunc(self) -> Callable:
+        """
+        Build a real relative-permittivity callback for EMpy on the physical window.
+
+        Returns
+        -------
+        callable
+            Function epsfunc(x, y) returning real ε = n² for EMpy FD solvers.
+        
+        Notes
+        -----
+        Used for non-PML simulations. For PML, calc() replaces this with a
+        complex callback from pml.make_pml_epsfunc().
+        """
         def epsfunc(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            """
+            Compute relative permittivity at EMpy cell-center coordinates.
+
+            Parameters
+            ----------
+            x : np.ndarray
+                1-D array of x-coordinates in microns (cell centers).
+            y : np.ndarray
+                1-D array of y-coordinates in microns (cell centers).
+
+            Returns
+            -------
+            np.ndarray
+                Real relative permittivity ε_r = n² with shape (x.size, y.size).
+
+            Raises
+            ------
+            ValueError
+                If x or y is not 1-dimensional.
+            """
             if x.ndim != 1 or y.ndim != 1:
                 raise ValueError("EMpy passes 1D center coordinates for x and y.")
             eps = np.empty((x.size, y.size), dtype=np.float64)
@@ -393,6 +572,25 @@ class Waveguide:
 
     @property
     def modes(self):
+        """
+        List-like sequence of vector FD modes (VFD / eme backends only).
+
+        Returns
+        -------
+        list
+            Mode objects from EMpy/EMEpy with neff and field accessors.
+
+        Raises
+        ------
+        RuntimeError
+            If calc() has not been called yet.
+        AttributeError
+            If the last solve used SVFD (semi-vectorial). Use mode(i) instead.
+        
+        Notes
+        -----
+        Prefer using mode(i) for a unified scalar/vector interface.
+        """
         if self._solver is None:
             raise RuntimeError("Call calc() before accessing modes.")
         if self._vectorial:
@@ -403,6 +601,20 @@ class Waveguide:
 
     @property
     def neffs(self) -> np.ndarray:
+        """
+        Effective indices for all computed modes.
+
+        Returns
+        -------
+        np.ndarray
+            1-D array of complex effective indices with length equal to neigs
+            from the last calc() call. May be complex with PML or lossy media.
+
+        Raises
+        ------
+        RuntimeError
+            If calc() has not been called yet.
+        """
         if self._solver is None:
             raise RuntimeError("Call calc() before accessing neffs.")
         if self._vectorial:
@@ -410,6 +622,28 @@ class Waveguide:
         return np.asarray(self._solver.neff)
 
     def mode(self, index: int | Sequence[int]):
+        """
+        Access one or more modes with a plotting-friendly wrapper.
+
+        Parameters
+        ----------
+        index : int or sequence of int
+            Mode index or indices in range [0, neigs). Sorted by effective index
+            (highest neff first).
+
+        Returns
+        -------
+        _ScalarModeView, _VectorModeView, or tuple thereof
+            Single mode view for int index, or tuple of views for sequence.
+            Returns scalar view for SVFD backend, vector view for VFD/eme.
+
+        Raises
+        ------
+        RuntimeError
+            If calc() has not been called yet.
+        IndexError
+            If index is out of range for the computed modes.
+        """
         if self._solver is None:
             raise RuntimeError("Call calc() before accessing modes.")
         if self._vectorial:
@@ -658,15 +892,54 @@ class _ScalarModeView:
     """SVFD eigenmode: principal field component / scalar wavefunction."""
 
     def __init__(self, solver: SVFDModeSolver, index: int, wg: Waveguide) -> None:
+        """
+        Initialize a scalar mode view from SVFD solver results.
+
+        Parameters
+        ----------
+        solver : SVFDModeSolver
+            EMpy semi-vectorial FD solver instance after solve().
+        index : int
+            Mode index (0-based) after EMpy sorting.
+        wg : Waveguide
+            Parent waveguide instance.
+        """
         self._solver = solver
         self._index = index
         self._wg = wg
 
     @property
     def neff(self) -> complex:
+        """
+        Effective index of this mode.
+
+        Returns
+        -------
+        complex
+            Complex effective index (may have imaginary part with PML).
+        """
         return self._solver.neff[self._index]
 
     def get_field(self, name: str):
+        """
+        Retrieve a field component array for this mode.
+
+        Parameters
+        ----------
+        name : str
+            Field name (case-insensitive). Options: 'phi', 'scalar', 'psi' for
+            the scalar wavefunction; 'ex' or 'ey' if solver method matches.
+
+        Returns
+        -------
+        np.ndarray
+            2-D field array on the FD grid.
+
+        Raises
+        ------
+        KeyError
+            If the requested field is not available for this solver method.
+        """
         n = name.lower()
         if n in ("phi", "scalar", "psi"):
             return self._solver.phi[self._index]
@@ -685,6 +958,26 @@ class _ScalarModeView:
         title: str | None = None,
         cmap: str = "hot",
     ):
+        """
+        Plot a field magnitude or scalar intensity on the FD grid.
+
+        Parameters
+        ----------
+        field : str, default='intensity'
+            Field to plot. 'intensity' or 'i' plots |φ|² from scalar wavefunction.
+            Other names are passed to get_field() and magnitude is shown.
+        ax : matplotlib.axes.Axes or None, default=None
+            Target axes. If None, creates a new figure.
+        title : str or None, default=None
+            Plot title. If None, shows neff to 4 decimal places.
+        cmap : str, default='hot'
+            Matplotlib colormap name for contourf.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes containing the plot with colorbar attached.
+        """
         import matplotlib.pyplot as plt
 
         if ax is None:
@@ -708,6 +1001,21 @@ class _ScalarModeView:
         return ax
 
     def plot_intensity(self, ax=None, title: str | None = None):
+        """
+        Plot the scalar intensity |φ|² for this mode.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes or None, default=None
+            Optional axes to draw into.
+        title : str or None, default=None
+            Optional plot title.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            Axes with the intensity plot.
+        """
         return self.plot(field="intensity", ax=ax, title=title)
     
 
@@ -716,14 +1024,45 @@ class _VectorModeView:
     """Full-vectorial EMpy :class:`FDMode` with pyFIMM-like plotting."""
 
     def __init__(self, fdmode, wg: Waveguide) -> None:
+        """
+        Initialize a vector mode view from VFD/EMEpy solver results.
+
+        Parameters
+        ----------
+        fdmode
+            EMpy or EMEpy mode object with neff, get_field, intensity methods.
+        wg : Waveguide
+            Parent waveguide instance.
+        """
         self._m = fdmode
         self._wg = wg
 
     @property
     def neff(self) -> complex:
+        """
+        Effective index of this vector mode.
+
+        Returns
+        -------
+        complex
+            Complex effective index from the underlying EMpy mode object.
+        """
         return self._m.neff
 
     def get_field(self, name: str):
+        """
+        Retrieve a vector field component from the underlying EMpy mode.
+
+        Parameters
+        ----------
+        name : str
+            Field component name (e.g., 'Ex', 'Ey', 'Ez', 'Hx', 'Hy', 'Hz').
+
+        Returns
+        -------
+        np.ndarray
+            2-D field array from EMpy's get_field method.
+        """
         return self._m.get_field(name)
 
     def plot(
@@ -733,6 +1072,31 @@ class _VectorModeView:
         title: str | None = None,
         cmap: str = "hot",
     ):
+        """
+        Plot intensity or a vector field magnitude.
+
+        Parameters
+        ----------
+        field : str, default='intensity'
+            Field to plot. 'intensity' or 'i' uses real(intensity()).
+            'ex', 'ey', 'ez' plot magnitudes of those components (case-insensitive).
+        ax : matplotlib.axes.Axes or None, default=None
+            Optional target axes. If None, creates a new figure.
+        title : str or None, default=None
+            Plot title. If None, shows neff to 4 decimal places.
+        cmap : str, default='hot'
+            Matplotlib colormap name for contourf.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            Axes with the plotted field and colorbar.
+
+        Raises
+        ------
+        ValueError
+            If field is not a recognized name.
+        """
         import matplotlib.pyplot as plt
 
         if ax is None:
@@ -764,4 +1128,19 @@ class _VectorModeView:
         return ax
 
     def plot_intensity(self, ax=None, title: str | None = None):
+        """
+        Plot the |E|² intensity for this vector mode.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes or None, default=None
+            Optional axes to draw into.
+        title : str or None, default=None
+            Optional plot title.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            Axes with the intensity plot.
+        """
         return self.plot(field="intensity", ax=ax, title=title)

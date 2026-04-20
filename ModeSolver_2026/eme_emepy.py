@@ -60,6 +60,31 @@ def _get_msempy_class() -> Callable[..., Any]:
     emepy_root = Path(spec_pkg.submodule_search_locations[0])
 
     def _exec_submodule(name: str, filename: str) -> Any:
+        """
+        Dynamically load an emepy submodule without executing package __init__.
+
+        Parameters
+        ----------
+        name : str
+            Submodule name without package prefix (e.g., 'fd', 'mode').
+        filename : str
+            Python source file name under emepy root (e.g., 'fd.py').
+
+        Returns
+        -------
+        module
+            The loaded and executed module object, registered in sys.modules.
+
+        Raises
+        ------
+        ImportError
+            If the expected file is missing from the emepy distribution.
+        
+        Notes
+        -----
+        This avoids importing the full emepy package __init__.py which would
+        pull in heavy dependencies (PyTorch, etc.) unneeded for FD modes.
+        """
         full_name = f"emepy.{name}"
         path = emepy_root / filename
         if not path.is_file():
