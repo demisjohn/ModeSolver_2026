@@ -32,6 +32,10 @@ class _Slab:
     n: float
     thickness_um: float
 
+    def __str__(self) -> str:
+        """Return a concise single-line description of this slab."""
+        return f"n = {self.n:.4f},  thickness = {self.thickness_um:.4f} µm"
+
     def __add__(self, other: Union["_Slab", "_SlabStack"]) -> "_SlabStack":
         """
         Concatenate this slab with another slab or stack to build vertical layers.
@@ -304,6 +308,92 @@ class Waveguide:
         self._wl_um: float | None = None
         self._x: np.ndarray | None = None
         self._y: np.ndarray | None = None
+
+    def __str__(self) -> str:
+        """Return a human-readable summary of the waveguide geometry and solver state.
+
+        Output mirrors the pyFIMM ``Waveguide.__str__()`` style: strips are listed
+        left-to-right with positional labels (Leftmost / Middle / Rightmost), and
+        slabs within each strip are listed bottom-to-top (Bottom / Middle / Top).
+        When ``calc()`` has been run, wavelength, solver backend, and effective
+        indices are also shown.
+
+        Example
+        -------
+        Waveguide Cross-section
+          Total width:  8.0000 µm,   Height: 18.2500 µm
+          Wavelength:   1.5500 µm   [solver: SVFD]
+          Modes:  5
+          neff:   1.7523   1.7200   1.6891   1.6504   1.6038
+
+        ----- Leftmost Strip: -----
+        width = 3.0000 µm
+        *** Bottom Layer: ***
+        n = 1.4440,  thickness = 10.0000 µm
+        *** Top Layer: ***
+        n = 1.4440,  thickness = 8.2500 µm
+
+        ----- Middle Strip 1: -----
+        width = 1.0000 µm
+        ...
+        """
+        lines: list[str] = []
+
+        # --- Header: geometry summary ---
+        lines.append("Waveguide Cross-section")
+        lines.append(
+            f"  Total width: {self._width_um():8.4f} µm,   "
+            f"Height: {self._height_um():.4f} µm"
+        )
+
+        # --- Solver state (only when calc() has been called) ---
+        if self._solver is not None:
+            backend_label = {
+                "svfd": "SVFD (semi-vectorial FD)",
+                "vfd":  "VFD  (full-vectorial FD)",
+                "eme":  "EME  (eigenmode expansion)",
+            }.get(self._solver_backend, self._solver_backend.upper())
+            lines.append(
+                f"  Wavelength:  {self._wl_um:.4f} µm   "
+                f"[solver: {backend_label}]"
+            )
+            neff_arr = self.neffs
+            lines.append(f"  Modes found: {neff_arr.size}")
+            neff_strs = "   ".join(
+                f"{v.real:.6f}" if v.imag == 0.0 else f"{v.real:.6f}{v.imag:+.2e}j"
+                for v in neff_arr
+            )
+            lines.append(f"  neff:   {neff_strs}")
+
+        lines.append("")  # blank line before strip list
+
+        # --- Strip / slab detail (pyFIMM style) ---
+        n_strips = len(self._strips)
+        for n, strip in enumerate(self._strips):
+            # Strip position label
+            if n == 0:
+                label = "Leftmost Strip:"
+            elif n == n_strips - 1:
+                label = "Rightmost Strip:"
+            else:
+                label = f"Middle Strip {n}:"
+            lines.append(5 * "-" + f" {label} " + 5 * "-")
+            lines.append(f"width = {strip.width_um:.4f} µm")
+
+            # Slab (layer) detail within this strip
+            slabs = strip.stack.slabs
+            n_slabs = len(slabs)
+            for i, slab in enumerate(slabs):
+                if i == 0:
+                    layer_label = "Bottom Layer:"
+                elif i == n_slabs - 1:
+                    layer_label = "Top Layer:"
+                else:
+                    layer_label = f"Middle Layer {i}:"
+                lines.append(3 * "*" + f" {layer_label} " + 3 * "*")
+                lines.append(str(slab))
+
+        return "\n".join(lines)
 
     def _height_um(self) -> float:
         """
