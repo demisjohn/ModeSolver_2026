@@ -83,7 +83,6 @@ def unset_WARN():
     '''Disable verbose debugging output.'''
     global _WARN
     _WARN = False
-
 #---------------------------------------#
 
 
