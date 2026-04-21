@@ -56,7 +56,7 @@ WG.calc(
     neigs=5,
     nx=500,
     ny=500,
-    boundary="pppp",    # N,S,E,W walls, options: P (PML)/0/S (summetric)/A (Anti-Symm)
+    boundary="p",    # N,S,E,W walls, options: P (PML)/0/S (summetric)/A (Anti-Symm)
     # solver="eme",  # optional: EMEpy MSEMpy (requires ``pip install emepy``)
     # tol=1e-6,
 )

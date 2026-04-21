@@ -235,7 +235,7 @@ def make_pml_epsfunc(
         -----
         Coordinates outside the physical window [0, w]×[0, h] inherit edge
         cladding index via n_at_bounded, with complex stretching applied
-        based on depth into each active PML slab.
+        based on depth into each active PML slab..
         """
         if x.ndim != 1 or y.ndim != 1:
             raise ValueError("EMpy passes 1D center coordinates for x and y.")

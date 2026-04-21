@@ -20,7 +20,7 @@ transverse solver. That path requires the ``emepy`` package and its dependencies
 (see ``pip install mode-solver-2026[eme]`` or the `emepy` project README).
 """
 
-from .ModeSolver import Material, Slice, Waveguide
+from .ModeSolver import Material, Mode, Slice, Waveguide
 
 
 def plot_refractive_index_profile(waveguide: Waveguide, **kwargs):
@@ -37,6 +37,7 @@ print( "\nModeSolver_2026   (v."  +  __version__  +  "   "  +  __versiondate__ +
 
 __all__ = [
     "Material",
+    "Mode",
     "Slice",
     "Waveguide",
     "plot_refractive_index_profile",

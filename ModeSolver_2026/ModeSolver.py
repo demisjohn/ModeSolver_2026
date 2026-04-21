@@ -668,33 +668,27 @@ class Waveguide:
         return self
 
     @property
-    def modes(self):
+    def modes(self) -> list:
         """
-        List-like sequence of vector FD modes (VFD / eme backends only).
+        All solved modes as a list of :class:`Mode` objects.
+
+        Works for every backend (SVFD, VFD, and EME). Each element supports
+        ``.neff``, ``.plot()``, ``.plot_intensity()``, ``.get_field()``,
+        ``.get_alpha()``, and ``.get_alpha_dB()``.
 
         Returns
         -------
-        list
-            Mode objects from EMpy/EMEpy with neff and field accessors.
+        list of Mode
+            One entry per computed eigenmode, ordered by decreasing real(neff).
 
         Raises
         ------
         RuntimeError
-            If calc() has not been called yet.
-        AttributeError
-            If the last solve used SVFD (semi-vectorial). Use mode(i) instead.
-        
-        Notes
-        -----
-        Prefer using mode(i) for a unified scalar/vector interface.
+            If :meth:`calc` has not been called yet.
         """
         if self._solver is None:
             raise RuntimeError("Call calc() before accessing modes.")
-        if self._vectorial:
-            return self._solver.modes
-        raise AttributeError(
-            "Scalar/SVFD solution has no .modes list; use mode(i) or neffs."
-        )
+        return [self.mode(i) for i in range(len(self.neffs))]
 
     @property
     def neffs(self) -> np.ndarray:
@@ -730,9 +724,10 @@ class Waveguide:
 
         Returns
         -------
-        _ScalarModeView, _VectorModeView, or tuple thereof
-            Single mode view for int index, or tuple of views for sequence.
-            Returns scalar view for SVFD backend, vector view for VFD/eme.
+        Mode or tuple of Mode
+            Single :class:`Mode` for int index, or tuple of :class:`Mode` for
+            a sequence. Returns a :class:`_ScalarModeView` for SVFD and a
+            :class:`_VectorModeView` for VFD/eme (both subclass :class:`Mode`).
 
         Raises
         ------
@@ -950,7 +945,11 @@ class Waveguide:
         for i in range(n_plot):
             m = self.mode(i)
             m.plot_intensity(
-                ax=axes_flat[i], title=f"Mode {i}, neff = {m.neff.real:.4f}"
+                ax=axes_flat[i],
+                title=(
+                    f"Mode {i},  neff = {m.neff.real:.4f}"
+                    f"\nα = {m.get_alpha_dB():.2f} dB/m"
+                ),
             )
         for j in range(n_plot, 6):
             axes_flat[j].axis("off")
@@ -985,7 +984,52 @@ class Waveguide:
 
 
 
-class _ScalarModeView:
+class Mode:
+    """
+    Public base class for all backend mode views.
+
+    Provides attenuation methods shared by :class:`_ScalarModeView` and
+    :class:`_VectorModeView`. Subclasses must expose a ``neff`` property and
+    store the parent :class:`Waveguide` as ``self._wg``.
+    """
+
+    _wg: "Waveguide"
+
+    @property
+    def neff(self) -> complex:
+        raise NotImplementedError  # implemented by subclasses
+
+    def get_alpha(self) -> float:
+        """
+        Power attenuation coefficient α in 1/m derived from Im(neff).
+
+        Uses the power-decay convention: P(z) = P(0)·exp(−α·z), so
+        α = 2·k₀·|Im(neff)| where k₀ = 2π/λ (in metres).
+
+        Returns
+        -------
+        float
+            Non-negative attenuation coefficient in 1/m.
+        """
+        k0 = 2.0 * np.pi / (self._wg._wl_um * 1e-6)
+        return 2.0 * k0 * abs(self.neff.imag)
+
+    def get_alpha_dB(self) -> float:
+        """
+        Power attenuation in dB/m derived from Im(neff).
+
+        Converts :meth:`get_alpha` from Np/m to dB/m via the identity
+        1 Np/m (power) = 10/ln(10) dB/m ≈ 4.343 dB/m.
+
+        Returns
+        -------
+        float
+            Non-negative attenuation in dB/m.
+        """
+        return self.get_alpha() * 10.0 / np.log(10.0)
+
+
+class _ScalarModeView(Mode):
     """SVFD eigenmode: principal field component / scalar wavefunction."""
 
     def __init__(self, solver: SVFDModeSolver, index: int, wg: Waveguide) -> None:
@@ -1093,7 +1137,12 @@ class _ScalarModeView:
         ax.set_aspect("equal")
         ax.set_xlabel("x (µm)")
         ax.set_ylabel("y (µm)")
-        ax.set_title(title or f"neff = {self.neff.real:.4f}")
+        ax.set_title(
+            title or (
+                f"neff = {self.neff.real:.4f}"
+                f"\nα = {self.get_alpha_dB():.2f} dB/m"
+            )
+        )
         plt.colorbar(cf, ax=ax, label=label)
         return ax
 
@@ -1117,7 +1166,7 @@ class _ScalarModeView:
     
 
 
-class _VectorModeView:
+class _VectorModeView(Mode):
     """Full-vectorial EMpy :class:`FDMode` with pyFIMM-like plotting."""
 
     def __init__(self, fdmode, wg: Waveguide) -> None:
@@ -1220,7 +1269,12 @@ class _VectorModeView:
         ax.set_aspect("equal")
         ax.set_xlabel("x (µm)")
         ax.set_ylabel("y (µm)")
-        ax.set_title(title or f"neff = {self.neff.real:.4f}")
+        ax.set_title(
+            title or (
+                f"neff = {self.neff.real:.4f}"
+                f"\nα = {self.get_alpha_dB():.2f} dB/m"
+            )
+        )
         plt.colorbar(cf, ax=ax, label=label)
         return ax
 
