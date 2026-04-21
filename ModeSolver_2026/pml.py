@@ -11,11 +11,18 @@ _ALLOWED_BOUNDARY = frozenset("AS0P")
 
 
 def validate_calc_boundary(boundary: str) -> str:
-    """Return normalized NSEW boundary string (uppercase)."""
+    """Return normalized NSEW boundary string (uppercase, 4 chars).
+
+    A single allowed character is treated as shorthand for all four sides,
+    e.g. ``"p"`` → ``"PPPP"``, ``"0"`` → ``"0000"``, ``"S"`` → ``"SSSS"``,
+    ``"A"`` → ``"AAAA"``.
+    """
     s = boundary.strip().upper()
+    if len(s) == 1 and s in _ALLOWED_BOUNDARY:
+        s = s * 4
     if len(s) != 4:
         raise ValueError(
-            "boundary must be exactly 4 characters (N,S,E,W order), "
+            "boundary must be exactly 1 or 4 characters (N,S,E,W order), "
             f"each one of A, S, 0, P; got {boundary!r}."
         )
     bad = [c for c in s if c not in _ALLOWED_BOUNDARY]

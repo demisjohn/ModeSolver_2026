@@ -562,15 +562,22 @@ class Waveguide:
             If any boundary is ``'P'``, extra vertices are appended outside that
             window for the PML; interior spacing matches ``linspace`` on the box.
         boundary
-            Four characters ``N,S,E,W`` (north, south, east, west). Each may be:
+            Four characters representing each side of the simulation window: `N,S,E,W` (north/top, south/bottom, east/right, west/left). Each may be:
 
             * ``'0'`` — Hx and Hy zero immediately outside the boundary (EMpy).
             * ``'S'`` / ``'A'`` — symmetry / antisymmetry (EMpy); see EMpy FD docs.
-            * ``'P'`` — perfectly matched layer: absorption via complex
+            * ``'P'`` — perfectly matched layer (PML): absorption via complex
               :math:`\\varepsilon` on padded cells; EMpy still sees outer ``'0'`` on
-              that edge. Example: ``"PP00"`` is PML on north and south only.
+              that edge. 
+            
+            Example: ``"PP00"`` is PML on top and bottom only, with zero-field boundaries on left and right.
 
-            Case-insensitive. ``'P'`` is only implemented via the complex-ε
+            Case-insensitive. 
+            If only one character is provided, it is expanded to all four sides,
+            e.g. ``"P"`` → ``"PPPP"``, ``"0"`` → ``"0000"``, ``"S"`` → ``"SSSS"``,
+            ``"A"`` → ``"AAAA"``.
+            
+            ``'P'`` (PML) is only implemented via the complex-ε
             preprocessor (same path for SVFD, VFD, and ``solver='eme'``).
         fd_method
             For ``solver`` SVFD only: ``'scalar'``, ``'Ex'``, or ``'Ey'``.

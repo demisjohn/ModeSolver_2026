@@ -53,7 +53,7 @@ print(f"Wrote {out_n}")
 # Use ``solver='eme'`` for EMEpy's MSEMpy (requires ``pip install emepy``).
 WG.calc(
     wavelength_um=wavelength_um,
-    neigs=10,
+    neigs=5,
     nx=500,
     ny=500,
     boundary="pppp",    # N,S,E,W walls, options: P (PML)/0/S (summetric)/A (Anti-Symm)
