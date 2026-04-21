@@ -891,7 +891,7 @@ class Waveguide:
         Parameters
         ----------
         which
-            ``None`` / ``""`` / ``"RIX"`` / ``"refractiveindex"`` for the index map;
+            ``None`` / ``""`` / ``"RIX"`` / ``"refractiveindex"`` for the refractive index profile;
             ``"all"`` for the multi-mode intensity figure.
         waveguide, nx, ny, ax, figsize, cmap, log_scale, title, xlabel, ylabel,
         colorbar_label, vmin, vmax
@@ -986,7 +986,7 @@ class Waveguide:
 
 class Mode:
     """
-    Public base class for all backend mode views.
+    Public base class for all backend optical Mode views.
 
     Provides attenuation methods shared by :class:`_ScalarModeView` and
     :class:`_VectorModeView`. Subclasses must expose a ``neff`` property and
@@ -1026,7 +1026,8 @@ class Mode:
         float
             Non-negative attenuation in dB/m.
         """
-        return self.get_alpha() * 10.0 / np.log(10.0)
+        return ( 10*np.log10(np.e) ) * self.get_alpha()
+        # return self.get_alpha() * 10.0 / np.log(10.0)
 
 
 class _ScalarModeView(Mode):
