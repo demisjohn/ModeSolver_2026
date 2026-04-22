@@ -50,12 +50,10 @@ print(f"Wrote {out_n}")
 
 # Default ``solver='SVFD'`` (EMpy semi-vectorial FD) — fast for this demo.
 # Use ``solver='VFD'`` or ``solver='vectorial'`` for full EMpy VFDModeSolver (slower).
-# Use ``solver='eme'`` for EMEpy's MSEMpy (requires ``pip install emepy``).
 WG.calc(
     wavelength_um=wavelength_um,
-    neigs=3,
+    neigs=5,
     boundary="p",    # N,S,E,W walls, options: P (PML)/0/S (summetric)/A (Anti-Symm)
-    # solver="eme",  # optional: EMEpy MSEMpy (requires ``pip install emepy``)
     # tol=1e-6,
 )
 

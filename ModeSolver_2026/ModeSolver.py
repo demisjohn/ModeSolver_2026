@@ -10,7 +10,6 @@ import numpy as np
 import EMpy.utils
 from EMpy.modesolvers.FD import SVFDModeSolver, VFDModeSolver
 
-from .eme_emepy import solve_cross_section_emepy_msempy
 from .pml import (
     boundary_for_empy,
     extend_vertex_axes,
@@ -225,13 +224,12 @@ class _StripChain:
         return _StripChain(self._strips + [other])
 
 
-def _normalize_calc_solver(solver: str) -> Literal["svfd", "vfd", "eme"]:
+def _normalize_calc_solver(solver: str) -> Literal["svfd", "vfd"]:
     """
     Map ``calc(solver=...)`` to an internal backend key.
 
     SVFD (default): ``"SVFD"``, ``"EMpy-SVFD"``, ``"semi-vectorial"``, ``"fd"``.
     VFD: ``"VFD"``, ``"EMpy-VFD"``, ``"vectorial"``.
-    EMEpy: ``"eme"``, ``"EMEpy"``, ``"eigenmode expansion"`` (spacing ignored).
     """
     s = (
         str(solver).strip().lower().replace(" ", "").replace("-", "").replace("_", "")
@@ -240,12 +238,10 @@ def _normalize_calc_solver(solver: str) -> Literal["svfd", "vfd", "eme"]:
         return "svfd"
     if s in ("vfd", "empyvfd", "vectorial", "fullvectorial"):
         return "vfd"
-    if s in ("eme", "emepy", "eigenmodeexpansion"):
-        return "eme"
     raise ValueError(
         f"Unknown calc(solver={solver!r}). "
-        "Use 'SVFD' (default), 'EMpy-SVFD', 'semi-vectorial', 'fd'; "
-        "'VFD', 'EMpy-VFD', 'vectorial'; or 'eme', 'EMEpy', 'eigenmode expansion'."
+        "Use 'SVFD' (default), 'EMpy-SVFD', 'semi-vectorial', 'fd'; or "
+        "'VFD', 'EMpy-VFD', 'vectorial'."
     )
 
 
@@ -304,7 +300,7 @@ class Waveguide:
             self._strips = [layout]
         self._solver: SVFDModeSolver | VFDModeSolver | None = None
         self._vectorial: bool = False
-        self._solver_backend: Literal["svfd", "vfd", "eme"] = "svfd"
+        self._solver_backend: Literal["svfd", "vfd"] = "svfd"
         self._wl_um: float | None = None
         self._x: np.ndarray | None = None
         self._y: np.ndarray | None = None
@@ -351,7 +347,6 @@ class Waveguide:
             backend_label = {
                 "svfd": "SVFD (semi-vectorial FD)",
                 "vfd":  "VFD  (full-vectorial FD)",
-                "eme":  "EME  (eigenmode expansion)",
             }.get(self._solver_backend, self._solver_backend.upper())
             lines.append(
                 f"  Wavelength:  {self._wl_um:.4f} µm   "
@@ -547,9 +542,6 @@ class Waveguide:
           ``"semi-vectorial"``, ``"fd"``.
         * **VFD**: full-vectorial :class:`VFDModeSolver` (all field components).
           Synonyms: ``"EMpy-VFD"``, ``"vectorial"``.
-        * **eme**: EMEpy's :class:`emepy.fd.MSEMpy` transverse mode solver (vector
-          FD as used in EMEpy workflows; requires the ``emepy`` package). Synonyms:
-          ``"EMEpy"``, ``"eigenmode expansion"``.
 
         Parameters
         ----------
@@ -578,16 +570,16 @@ class Waveguide:
             ``"A"`` → ``"AAAA"``.
             
             ``'P'`` (PML) is only implemented via the complex-ε
-            preprocessor (same path for SVFD, VFD, and ``solver='eme'``).
+            preprocessor (same path for SVFD and VFD).
         fd_method
             For ``solver`` SVFD only: ``'scalar'``, ``'Ex'``, or ``'Ey'``.
         index_guess
             For VFD only: optional sigma shift for the sparse eigensolver (default
             uses max index minus a small offset).
         tol
-            Eigenvalue tolerance for SVFD, VFD, and EMEpy ``MSEMpy`` (``accuracy``).
+            Eigenvalue tolerance for SVFD and VFD.
         solver
-            ``"SVFD"``, ``"VFD"``, or ``"eme"`` (plus synonyms above).
+            ``"SVFD"`` or ``"VFD"`` (plus synonyms above).
         pml_cells
             When any side uses ``'P'``: integer (same count on every ``P`` side) or
             ``(N, S, E, W)`` integer tuple for PML thickness in **FD cells** on each
@@ -633,21 +625,7 @@ class Waveguide:
 
         kind = _normalize_calc_solver(solver)
         print("Waveguide.calc(): Calculating Modes...")
-        if kind == "eme":
-            result = solve_cross_section_emepy_msempy(
-                self,
-                wavelength_um=wavelength_um,
-                neigs=neigs,
-                x=x,
-                y=y,
-                boundary=b_empy,
-                tol=tol,
-                epsfunc=epsfunc,
-            )
-            self._solver = result.solver
-            self._vectorial = True
-            self._solver_backend = "eme"
-        elif kind == "vfd":
+        if kind == "vfd":
             fd_solver = VFDModeSolver(
                 wavelength_um, x, y, epsfunc, b_empy
             ).solve(neigs=neigs, tol=tol, guess=guess)
@@ -672,7 +650,7 @@ class Waveguide:
         """
         All solved modes as a list of :class:`Mode` objects.
 
-        Works for every backend (SVFD, VFD, and EME). Each element supports
+        Works for every backend (SVFD and VFD). Each element supports
         ``.neff``, ``.plot()``, ``.plot_intensity()``, ``.get_field()``,
         ``.get_alpha()``, and ``.get_alpha_dB()``.
 
@@ -727,7 +705,7 @@ class Waveguide:
         Mode or tuple of Mode
             Single :class:`Mode` for int index, or tuple of :class:`Mode` for
             a sequence. Returns a :class:`_ScalarModeView` for SVFD and a
-            :class:`_VectorModeView` for VFD/eme (both subclass :class:`Mode`).
+            :class:`_VectorModeView` for VFD (both subclass :class:`Mode`).
 
         Raises
         ------
@@ -956,12 +934,7 @@ class Waveguide:
 
         if suptitle is None:
             backend = self._solver_backend
-            if backend == "eme":
-                sub = (
-                    f"First {n_plot} mode(s)\n"
-                    'ModeSolver_2026 · solver="eme" (EMEpy MSEMpy)'
-                )
-            elif backend == "vfd":
+            if backend == "vfd":
                 sub = (
                     f"First {n_plot} mode(s)\n"
                     'ModeSolver_2026 · solver="VFD" (EMPy VFDModeSolver)'
@@ -1172,12 +1145,12 @@ class _VectorModeView(Mode):
 
     def __init__(self, fdmode, wg: Waveguide) -> None:
         """
-        Initialize a vector mode view from VFD/EMEpy solver results.
+        Initialize a vector mode view from VFD solver results.
 
         Parameters
         ----------
         fdmode
-            EMpy or EMEpy mode object with neff, get_field, intensity methods.
+            EMpy mode object with neff, get_field, intensity methods.
         wg : Waveguide
             Parent waveguide instance.
         """
