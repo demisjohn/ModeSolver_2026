@@ -251,7 +251,8 @@ class Waveguide:
 
         Parameters
         ----------
-        nx, ny: int, number grid points in each dimension.
+        nx, ny : int, default=200
+            Number of grid points in each dimension.
 
         Returns
         -------
@@ -345,15 +346,19 @@ class Waveguide:
 
         Parameters
         ----------
-        wavelength_um
+        wavelength_um : float, default=1.55
             Vacuum wavelength in microns.
-        neigs
+        neigs : int, default=5
             Number of eigenmodes to compute.
-        nx, ny
-            Vertex counts along the **physical** window ``[0, width] × [0, height]``.
+        nx : int, default=120
+            Vertex count along x-axis (**physical** window ``[0, width]``).
             If any boundary is ``'P'``, extra vertices are appended outside that
             window for the PML; interior spacing matches ``linspace`` on the box.
-        boundary
+        ny : int, default=120
+            Vertex count along y-axis (**physical** window ``[0, height]``).
+            If any boundary is ``'P'``, extra vertices are appended outside that
+            window for the PML; interior spacing matches ``linspace`` on the box.
+        boundary : str, default="0000"
             Four characters representing each side of the simulation window: `N,S,E,W` (north/top, south/bottom, east/right, west/left). Each may be:
 
             * ``'0'`` — Hx and Hy zero immediately outside the boundary (EMpy).
@@ -371,24 +376,24 @@ class Waveguide:
 
             ``'P'`` (PML) is only implemented via the complex-ε
             preprocessor (same path for SVFD and VFD).
-        fd_method
+        fd_method : str, default="scalar"
             For ``solver`` SVFD only: ``'scalar'``, ``'Ex'``, or ``'Ey'``.
-        index_guess
-            For VFD only: optional sigma shift for the sparse eigensolver (default
-            uses max index minus a small offset).
-        tol
+        index_guess : float or None, default=None
+            For VFD only: optional sigma shift for the sparse eigensolver.
+            If ``None``, uses max index minus a small offset.
+        tol : float, default=0.0
             Eigenvalue tolerance for SVFD and VFD.
-        solver
+        solver : str, default="SVFD"
             ``"SVFD"`` or ``"VFD"`` (plus synonyms above).
-        pml_cells
+        pml_cells : int or tuple[int, int, int, int], default=10
             When any side uses ``'P'``: integer (same count on every ``P`` side) or
             ``(N, S, E, W)`` integer tuple for PML thickness in **FD cells** on each
             ``P`` side (minimum 1 cell per active ``P``).
-        pml_m
+        pml_m : int, default=3
             Polynomial grade :math:`m` in :math:`\\sigma(u) \\propto (u/d)^m`.
-        pml_R
+        pml_R : float, default=1e-8
             Target reflectivity :math:`R` for the default :math:`\\sigma_{\\max}` choice.
-        pml_sigma_max_geom
+        pml_sigma_max_geom : float or None, default=None
             If set, overrides the geometric :math:`\\sigma_{\\max}` (in ``1/m`` at full
             depth) for every active PML slab; otherwise use the default from
             :math:`(m+1)/(2d)\\ln(1/R)` with physical thickness :math:`d`.
@@ -565,11 +570,13 @@ class Waveguide:
 
         Parameters
         ----------
-        waveguide
-            Constructed :class:`~ModeSolver_2026.Waveguide` (``calc()`` not required). Defaults to `self`.
-        nx, ny
-            Sample counts along x and y.
-        ax
+        waveguide : Waveguide or None, default=None
+            Constructed :class:`~ModeSolver_2026.Waveguide` (``calc()`` not required). If ``None``, uses `self`.
+        nx : int, default=200
+            Sample count along x-axis.
+        ny : int, default=200
+            Sample count along y-axis.
+        ax : matplotlib.axes.Axes or None, default=None
             Optional existing matplotlib axes.
         figsize
             Figure ``(width, height)`` in inches when ``ax`` is None. If omitted,
@@ -578,8 +585,14 @@ class Waveguide:
             Matplotlib colormap name (Defaults to `coolwarm` for hot–cold).
         log_scale
             If True, map colors with logarithmic scaling of *n*. Defaults to False.
-        title, xlabel, ylabel, colorbar_label
-            Axis and colorbar labels.
+        title : str or None, default=None
+            Plot title.
+        xlabel : str, default="x (µm)"
+            X-axis label.
+        ylabel : str, default="y (µm)"
+            Y-axis label.
+        colorbar_label : str, default="Refractive index n"
+            Colorbar label.
         vmin, vmax
             Optional bounds for the norm (linear or log). Defaults to data range.
 
@@ -670,18 +683,37 @@ class Waveguide:
 
         Parameters
         ----------
-        which
+        which : str or None, default=None
             ``None`` / ``""`` / ``"RIX"`` / ``"refractiveindex"`` for the refractive index profile;
             ``"all"`` for the multi-mode intensity figure.
-        waveguide, nx, ny, ax, figsize, cmap, log_scale, title, xlabel, ylabel,
-        colorbar_label, vmin, vmax
-            Passed to :meth:`plot_refractive_index_profile` for RIX plots.
-        suptitle
-            Used only for ``which="all"`` (figure super-title). If omitted, a
-            default is chosen from the solver backend.
-        figsize
-            For RIX: optional figure size when ``ax`` is None. For ``"all"``:
-            defaults to ``(11, 7)`` when omitted.
+        waveguide : Waveguide or None, default=None
+            Constructed :class:`~ModeSolver_2026.Waveguide` (``calc()`` not required). If ``None``, uses `self`.
+        nx : int, default=200
+            Sample count along x-axis (for RIX plots).
+        ny : int, default=200
+            Sample count along y-axis (for RIX plots).
+        ax : matplotlib.axes.Axes or None, default=None
+            Target axes for RIX plots; ignored for ``"all"``.
+        figsize : tuple or None, default=None
+            Figure size: for RIX plots, optional size when ``ax`` is None; for ``"all"``, defaults to ``(11, 7)`` when omitted.
+        cmap : str, default="coolwarm"
+            Matplotlib colormap name for RIX plots.
+        log_scale : bool, default=False
+            If True, use logarithmic color scaling for RIX plots.
+        title : str or None, default=None
+            Plot title for RIX plots.
+        xlabel : str, default="x (µm)"
+            X-axis label for RIX plots.
+        ylabel : str, default="y (µm)"
+            Y-axis label for RIX plots.
+        colorbar_label : str, default="Refractive index n"
+            Colorbar label for RIX plots.
+        vmin : float or None, default=None
+            Lower bound for RIX color norm; defaults to data minimum.
+        vmax : float or None, default=None
+            Upper bound for RIX color norm; defaults to data maximum.
+        suptitle : str or None, default=None
+            Figure super-title for ``which="all"``; if omitted, a default based on solver backend is chosen.
 
         Returns
         -------
