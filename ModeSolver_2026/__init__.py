@@ -8,7 +8,10 @@ Backend: `ElectromagneticPython` (EMpy) finite-difference mode solvers
 https://github.com/lbolla/EMpy .
 """
 
-from .ModeSolver import Material, Mode, Slice, Waveguide
+from .Material import Material
+from .Mode import Mode
+from .structure import Slice
+from .Waveguide import Waveguide
 
 
 def plot_refractive_index_profile(waveguide: Waveguide, **kwargs):
