@@ -18,6 +18,13 @@ from .pml import (
     normalize_pml_cells,
     validate_calc_boundary,
 )
+from .bend import (
+    BendFormula,
+    bend_index_factor,
+    normalize_bend_formula,
+    normalize_bend_radius,
+    wrap_epsfunc as _wrap_epsfunc_bent,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -105,6 +112,99 @@ class Waveguide:
         self._x: np.ndarray | None = None
         self._y: np.ndarray | None = None
 
+        # Bent-waveguide state (conformal equivalent-index transform).
+        # ``bend_radius`` is in METERS; None / 0 / +/-inf => straight waveguide.
+        # ``bend_origin_um`` defaults to width_um/2 at calc-time when None.
+        self._bend_radius_m: float | None = None
+        self._bend_origin_um: float | None = None
+        self._bend_formula: BendFormula = "exp"
+
+    # ------------------------------------------------------------------
+    # Bent-waveguide API (conformal equivalent-index transform)
+    # ------------------------------------------------------------------
+    @property
+    def bend_radius(self) -> float | None:
+        """
+        Signed bend radius in METERS, or ``None`` for a straight waveguide.
+
+        Setting this to a finite nonzero value triggers the conformal
+        equivalent-index transformation inside :meth:`calc`:
+
+            n'(x, y) = n(x, y) * f((x - x0) / R)
+
+        where ``f`` is controlled by :attr:`bend_formula` and ``x0`` by
+        :attr:`bend_origin_um`. Sign convention: ``sign(R) > 0`` places the
+        outside of the bend at ``+x`` (center of curvature at ``x0 - R``);
+        ``sign(R) < 0`` flips the orientation.
+
+        ``None``, ``0``, and ``±inf`` all mean "straight waveguide".
+
+        To capture the bend *radiation loss*, enable a PML on the outer side
+        (e.g. ``boundary="00P0"`` for ``R > 0``). ``Im(neff)`` after
+        :meth:`calc` will then include the curvature loss.
+        """
+        return self._bend_radius_m
+
+    @bend_radius.setter
+    def bend_radius(self, R_m: float | None) -> None:
+        """Set the bend radius (meters). ``None`` / ``0`` / ``±inf`` => straight."""
+        if R_m is None:
+            self._bend_radius_m = None
+            return
+        R = float(R_m)
+        if R == 0.0 or not np.isfinite(R):
+            # Straight waveguide: accept any "no-bend" sentinel.
+            self._bend_radius_m = None
+            return
+        self._bend_radius_m = R
+
+    @property
+    def bend_origin_um(self) -> float | None:
+        """
+        Radial origin ``x0`` (µm) for the conformal transform.
+
+        ``None`` (default) resolves to ``width_um / 2`` at :meth:`calc`-time.
+        Set to a specific ``x`` coordinate to reference the transform to that
+        position (e.g. the center of the core strip).
+        """
+        return self._bend_origin_um
+
+    @bend_origin_um.setter
+    def bend_origin_um(self, x0_um: float | None) -> None:
+        if x0_um is None:
+            self._bend_origin_um = None
+            return
+        v = float(x0_um)
+        if not np.isfinite(v):
+            raise ValueError(
+                f"bend_origin_um must be finite or None; got {x0_um!r}."
+            )
+        self._bend_origin_um = v
+
+    @property
+    def bend_formula(self) -> BendFormula:
+        """Conformal formula: ``"exp"`` (default, exact) or ``"linear"`` (first-order)."""
+        return self._bend_formula
+
+    @bend_formula.setter
+    def bend_formula(self, formula: str) -> None:
+        self._bend_formula = normalize_bend_formula(formula)
+
+    def _resolved_bend_origin_um(self) -> float:
+        """Return the active ``x0`` in µm, using width/2 when unset."""
+        if self._bend_origin_um is None:
+            return self._width_um() / 2.0
+        return float(self._bend_origin_um)
+
+    def _active_bend(self) -> tuple[float, float, BendFormula] | None:
+        """
+        Return ``(R_m, x0_um, formula)`` if a bend is active, else ``None``.
+        """
+        R = normalize_bend_radius(self._bend_radius_m)
+        if R is None:
+            return None
+        return (R, self._resolved_bend_origin_um(), self._bend_formula)
+
     def __str__(self) -> str:
         """Return a human-readable summary of the waveguide geometry and solver state.
 
@@ -141,6 +241,15 @@ class Waveguide:
             f"  Total width: {self._width_um():8.4f} µm,   "
             f"Height: {self._height_um():.4f} µm"
         )
+
+        # --- Bend state (only when bend_radius is set) ---
+        bend = self._active_bend()
+        if bend is not None:
+            R_m, x0_um, formula = bend
+            lines.append(
+                f"  Bend radius: {R_m:.4g} m   "
+                f"(origin x0 = {x0_um:.4f} µm,  formula = '{formula}')"
+            )
 
         # --- Solver state (only when calc() has been called) ---
         if self._solver is not None:
@@ -244,22 +353,29 @@ class Waveguide:
     def refractive_index_grid(
         self,
         nx: int = 200,
-        ny: int = 200
+        ny: int = 200,
+        *,
+        apply_bend: bool = True,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Sample the piecewise-constant refractive index on a uniform grid.
+        Sample the refractive index on a uniform grid.
 
         Parameters
         ----------
         nx, ny : int, default=200
             Number of grid points in each dimension.
+        apply_bend : bool, default=True
+            If True and :attr:`bend_radius` is set, return the conformal
+            equivalent index ``n'(x, y)`` actually seen by the solver. Set to
+            False to inspect the raw straight-WG profile.
 
         Returns
         -------
         x, y
             1D coordinates in µm (horizontal ``x``, vertical ``y``, bottom-left origin).
         n
-            2D array ``n[ix, iy]`` at ``(x[ix], y[iy])`` (``ij`` indexing).
+            2D array ``n[ix, iy]`` at ``(x[ix], y[iy])`` (``ij`` indexing). When
+            ``apply_bend`` is True and a bend is active, this is ``n'``.
         """
         print("waveguide.plot_refractive_index_profile(): plotting RIX...")
         w = self._width_um()
@@ -270,6 +386,12 @@ class Waveguide:
         for ix, xv in enumerate(x):
             for iy, yv in enumerate(y):
                 n[ix, iy] = self._n_at(float(xv), float(yv))
+        if apply_bend:
+            bend = self._active_bend()
+            if bend is not None:
+                R_m, x0_um, formula = bend
+                f = bend_index_factor(x, x0_um, R_m * 1e6, formula)
+                n = n * f[:, None]
         return x, y, n
 
     def _make_epsfunc(self) -> Callable:
@@ -424,6 +546,15 @@ class Waveguide:
             x = np.linspace(0.0, w, nx)
             y = np.linspace(0.0, h, ny)
             epsfunc = self._make_epsfunc()
+
+        # Conformal equivalent-index transformation for bent waveguides.
+        # Purely a preprocessing step on epsfunc; commutes with the PML
+        # complex-stretching factor, so both paths above are handled the same.
+        bend = self._active_bend()
+        if bend is not None:
+            R_m, x0_um, formula = bend
+            R_um = R_m * 1e6
+            epsfunc = _wrap_epsfunc_bent(epsfunc, R_um, x0_um, formula)
 
         nmax = max(slab.n for st in self._strips for slab in st.stack.slabs)
         guess = index_guess if index_guess is not None else nmax - 1e-3
@@ -649,7 +780,17 @@ class Waveguide:
         ax.set_aspect("equal")
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
-        ax.set_title(title or "Refractive index profile")
+        if title is None:
+            bend = waveguide._active_bend()
+            if bend is not None:
+                R_m, _x0, formula = bend
+                title = (
+                    f"Refractive index n'(x, y)   "
+                    f"[bend R = {R_m:.3g} m, '{formula}']"
+                )
+            else:
+                title = "Refractive index profile"
+        ax.set_title(title)
         fig.colorbar(cf, ax=ax, label=colorbar_label)
         return fig, ax
 
@@ -777,6 +918,13 @@ class Waveguide:
                 sub = (
                     f"First {n_plot} mode(s)\n"
                     'ModeSolver_2026 · solver="SVFD" (EMPy SVFDModeSolver)'
+                )
+            bend = self._active_bend()
+            if bend is not None:
+                R_m, _x0, formula = bend
+                sub += (
+                    f"\nBent waveguide: R = {R_m:.3g} m  "
+                    f"[conformal '{formula}' transform]"
                 )
             fig.suptitle(sub, fontsize=11)
         else:
