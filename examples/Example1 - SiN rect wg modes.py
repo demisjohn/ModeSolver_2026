@@ -46,9 +46,9 @@ fig_n.savefig(out_n)
 print(f"Wrote {out_n}")
 
 
+'''
 # curve the waveguide using index transformation:
 WG.bend_radius = 200e-6   # meters 
-
 
 # plot refractive index profile
 
@@ -59,6 +59,7 @@ out_n = Path(__file__).resolve().parent / "Example1 - Bend RIX profile.png"
 fig_n.savefig(out_n)
 #plt.close(fig_n)
 print(f"Wrote {out_n}")
+'''
 
 
 # Default ``solver='SVFD'`` (EMpy semi-vectorial FD) — fast for this demo.
@@ -77,8 +78,7 @@ for m in WG.modes:
     print(   m.neff, str(m.get_alpha_dB()) + " dB/m"   )
 
 
-fig, ax = WG.plot("all", 
-                  title = "Bend with R = %e mm" % (WG.bend_radius * 1e3))
+fig, ax = WG.plot("all")
 
 out = Path(__file__).resolve().parent / "Example1 - SiN rect wg modes output.png"
 fig.savefig(out)

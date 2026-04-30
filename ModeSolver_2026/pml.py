@@ -1,4 +1,4 @@
-"""PML preprocessing: complex isotropic permittivity on a padded real grid."""
+"""PML preprocessing via stretched-coordinate complex grid for FD mode solvers."""
 
 from __future__ import annotations
 
@@ -189,6 +189,103 @@ def _s_stretch(
     return 1.0 - 1.0j * sigma_rad / omega
 
 
+def make_pml_complex_grid(
+    x_real: np.ndarray,
+    y_real: np.ndarray,
+    w_um: float,
+    h_um: float,
+    wavelength_um: float,
+    boundary_upper: str,
+    d_north_um: float,
+    d_south_um: float,
+    d_east_um: float,
+    d_west_um: float,
+    m: int = 3,
+    R: float = 1e-8,
+    sigma_max_geom_override: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert real extended vertex axes into complex stretched-coordinate arrays.
+
+    Inside the physical domain ``[0, w] x [0, h]`` the coordinates stay purely
+    real.  In the PML padding the cell spacings acquire an imaginary part that
+    encodes the PML absorption via the Chew & Weedon (1994) stretched-coordinate
+    formulation.  When passed to EMpy's FD solver, ``dx = numpy.diff(x_complex)``
+    is complex in PML cells, so the finite-difference stencil coefficients
+    (which are proportional to ``1/dx`` and ``1/dx**2``) automatically include
+    the correct ``1/s`` and ``1/s**2`` PML factors without modifying EMpy's code.
+
+    Parameters
+    ----------
+    x_real, y_real : np.ndarray
+        Real vertex coordinates (µm) from :func:`extend_vertex_axes`.
+    w_um, h_um : float
+        Physical domain width and height in µm.
+    wavelength_um : float
+        Vacuum wavelength in µm.
+    boundary_upper : str
+        Four-character NSEW boundary string (from :func:`validate_calc_boundary`).
+    d_north_um, d_south_um, d_east_um, d_west_um : float
+        PML slab thickness on each side in µm (0 when that side is not PML).
+    m : int, default 3
+        Polynomial grading order for :math:`\\sigma(u) \\propto (u/d)^m`.
+    R : float, default 1e-8
+        Target reflectivity for the default :math:`\\sigma_{\\max}`.
+    sigma_max_geom_override : float or None, default None
+        If set, overrides the automatic :math:`\\sigma_{\\max}`.
+
+    Returns
+    -------
+    x_complex, y_complex : np.ndarray (dtype=complex128)
+        Vertex arrays whose ``diff()`` values carry the PML stretching.
+    """
+    omega = 2.0 * np.pi * const.c / (wavelength_um * 1e-6)
+    b = boundary_upper
+
+    def _stretch_axis(
+        coords: np.ndarray,
+        lo: float,
+        hi: float,
+        d_lo_um: float,
+        d_hi_um: float,
+        b_lo: str,
+        b_hi: str,
+    ) -> np.ndarray:
+        n = len(coords)
+        if n < 2:
+            return coords.astype(np.complex128)
+        dx_real = np.diff(coords)
+        dx_complex = np.empty(n - 1, dtype=np.complex128)
+        for i in range(n - 1):
+            mid = 0.5 * (coords[i] + coords[i + 1])
+            s: complex = 1.0 + 0.0j
+            if b_hi == "P" and d_hi_um > 0.0:
+                u = max(0.0, mid - hi)
+                if u > 0.0:
+                    s *= _s_stretch(u, d_hi_um, m, R, omega, sigma_max_geom_override)
+            if b_lo == "P" and d_lo_um > 0.0:
+                u = max(0.0, lo - mid)
+                if u > 0.0:
+                    s *= _s_stretch(u, d_lo_um, m, R, omega, sigma_max_geom_override)
+            # _s_stretch returns s = 1 - jσ/ω (ε-convention: multiplying ε by s
+            # adds loss).  EMpy's FD stencil needs Im(dx) > 0 for absorption
+            # (see EMpy.stretchmesh which forces Im >= 0).  Conjugating gives
+            # s_grid = 1 + jσ/ω so that dx_complex has the correct sign.
+            dx_complex[i] = dx_real[i] * s.conjugate()
+        out = np.empty(n, dtype=np.complex128)
+        out[0] = coords[0]
+        np.cumsum(dx_complex, out=out[1:])
+        out[1:] += coords[0]
+        return out
+
+    # x: west PML is the "lo" side (x < 0), east PML is the "hi" side (x > w)
+    x_complex = _stretch_axis(x_real, 0.0, w_um, d_west_um, d_east_um, b[3], b[2])
+    # y: south PML is the "lo" side (y < 0), north PML is the "hi" side (y > h)
+    y_complex = _stretch_axis(y_real, 0.0, h_um, d_south_um, d_north_um, b[1], b[0])
+    return x_complex, y_complex
+
+
+# ---- legacy / deprecated -------------------------------------------------
+
 def make_pml_epsfunc(
     n_at_bounded: Callable[[float, float], float],
     w_um: float,
@@ -203,40 +300,24 @@ def make_pml_epsfunc(
     R: float = 1e-8,
     sigma_max_geom_override: float | None = None,
 ) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+    """Return ``epsfunc(x, y)`` with isotropic complex-ε PML.
+
+    .. deprecated::
+        This applies PML via ``ε_eff = n² · s_x · s_y``, an isotropic
+        approximation that adds spurious loss to guided modes.  Use
+        :func:`make_pml_complex_grid` (stretched-coordinate approach) instead.
     """
-    Return ``epsfunc(x, y)`` suitable for EMpy: relative permittivity ε_r = n² (complex).
-    """
+    import warnings
+    warnings.warn(
+        "make_pml_epsfunc() uses an isotropic ε approximation that adds "
+        "spurious loss to guided modes.  Use make_pml_complex_grid() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     omega = 2.0 * np.pi * const.c / (wavelength_um * 1e-6)
     b = boundary_upper
 
     def epsfunc(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """
-        Compute complex relative permittivity with PML absorption.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            1-D array of x-coordinates in microns (EMpy cell centers).
-        y : np.ndarray
-            1-D array of y-coordinates in microns (EMpy cell centers).
-
-        Returns
-        -------
-        np.ndarray
-            Complex relative permittivity ε_r = (n₀ √(s_x s_y))² with shape
-            (x.size, y.size), dtype=complex128.
-
-        Raises
-        ------
-        ValueError
-            If x or y is not 1-dimensional.
-        
-        Notes
-        -----
-        Coordinates outside the physical window [0, w]×[0, h] inherit edge
-        cladding index via n_at_bounded, with complex stretching applied
-        based on depth into each active PML slab..
-        """
         if x.ndim != 1 or y.ndim != 1:
             raise ValueError("EMpy passes 1D center coordinates for x and y.")
         out = np.empty((x.size, y.size), dtype=np.complex128)

@@ -14,7 +14,7 @@ from .pml import (
     boundary_for_empy,
     extend_vertex_axes,
     has_pml,
-    make_pml_epsfunc,
+    make_pml_complex_grid,
     normalize_pml_cells,
     validate_calc_boundary,
 )
@@ -72,6 +72,55 @@ def _waveguide_plot_kind(which: str | None) -> Literal["rix", "all"]:
         "Waveguide.plot(which=...): unknown "
         f"{which!r}; use None (default), 'RIX', 'refractiveindex', or 'all'."
     )
+
+
+def _svfd_solve_pml(
+    wl: float,
+    x: np.ndarray,
+    y: np.ndarray,
+    epsfunc,
+    boundary: str,
+    method: str,
+    neigs: int,
+    tol: float,
+    guess: float,
+) -> SVFDModeSolver:
+    """SVFD eigsolve with shift-invert, required for complex-grid PML.
+
+    EMpy's default SVFD ``solve()`` uses ``which='LR'`` (largest real-part
+    eigenvalue) which converges poorly for the fully-complex FD matrix
+    produced by stretched-coordinate PML grids.  This helper builds the
+    matrix the same way EMpy does, then calls ``eigs(sigma=...)`` to find
+    eigenvalues near the expected guided-mode range.
+    """
+    from scipy.sparse.linalg import eigs
+
+    solver = SVFDModeSolver(wl, x, y, epsfunc, boundary, method=method)
+    solver.nmodes = neigs
+    solver.tol = tol
+    A = solver.build_matrix()
+
+    k0 = 2.0 * np.pi / wl
+    sigma = (guess * k0) ** 2
+    eigvals, eigvecs = eigs(
+        A, k=neigs, sigma=sigma, tol=tol,
+        ncv=max(20, 10 * neigs), return_eigenvectors=True,
+    )
+
+    neff = wl * np.sqrt(eigvals) / (2.0 * np.pi)
+    phi = [eigvecs[:, i].reshape(solver.nx, solver.ny) for i in range(neigs)]
+
+    idx = np.flipud(np.argsort(neff.real))
+    solver.neff = neff[idx]
+    ordered_phi = [phi[i] for i in idx]
+
+    if method == "scalar":
+        solver.phi = ordered_phi
+    elif method == "Ex":
+        solver.Ex = ordered_phi
+    elif method == "Ey":
+        solver.Ey = ordered_phi
+    return solver
 
 
 class Waveguide:
@@ -439,6 +488,28 @@ class Waveguide:
 
         return epsfunc
 
+    def _make_epsfunc_bounded(self) -> Callable:
+        """Build a real ε callback that clamps coordinates to the physical box.
+
+        Unlike :meth:`_make_epsfunc`, coordinates outside ``[0, width] x
+        [0, height]`` are clamped (not rejected), so PML-padded grids get the
+        nearest-edge cladding index.  Complex-valued coordinates (from the
+        stretched-coordinate PML grid) are reduced to their real parts before
+        lookup.
+        """
+        def epsfunc(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+            xr = np.real(x) if np.iscomplexobj(x) else x
+            yr = np.real(y) if np.iscomplexobj(y) else y
+            if xr.ndim != 1 or yr.ndim != 1:
+                raise ValueError("EMpy passes 1D center coordinates for x and y.")
+            eps = np.empty((xr.size, yr.size), dtype=np.float64)
+            for ix, xv in enumerate(xr):
+                for iy, yv in enumerate(yr):
+                    eps[ix, iy] = self._n_at_bounded(float(xv), float(yv)) ** 2
+            return eps
+
+        return epsfunc
+
     def calc(
         self,
         wavelength_um: float = 1.55,
@@ -485,9 +556,8 @@ class Waveguide:
 
             * ``'0'`` — Hx and Hy zero immediately outside the boundary (EMpy).
             * ``'S'`` / ``'A'`` — symmetry / antisymmetry (EMpy); see EMpy FD docs.
-            * ``'P'`` — perfectly matched layer (PML): absorption via complex
-              :math:`\\varepsilon` on padded cells; EMpy still sees outer ``'0'`` on
-              that edge.
+            * ``'P'`` — perfectly matched layer (PML): stretched-coordinate PML
+              via complex grid spacing; EMpy still sees outer ``'0'`` on that edge.
 
             Example: ``"PP00"`` is PML on top and bottom only, with zero-field boundaries on left and right.
 
@@ -495,9 +565,6 @@ class Waveguide:
             If only one character is provided, it is expanded to all four sides,
             e.g. ``"P"`` → ``"PPPP"``, ``"0"`` → ``"0000"``, ``"S"`` → ``"SSSS"``,
             ``"A"`` → ``"AAAA"``.
-
-            ``'P'`` (PML) is only implemented via the complex-ε
-            preprocessor (same path for SVFD and VFD).
         fd_method : str, default="scalar"
             For ``solver`` SVFD only: ``'scalar'``, ``'Ex'``, or ``'Ey'``.
         index_guess : float or None, default=None
@@ -525,31 +592,29 @@ class Waveguide:
         b_upper = validate_calc_boundary(boundary)
         b_empy = boundary_for_empy(b_upper)
 
-        if has_pml(b_upper):
+        use_pml = has_pml(b_upper)
+
+        if use_pml:
             pml_nswe = normalize_pml_cells(pml_cells, b_upper)
-            x, y, meta = extend_vertex_axes(w, h, nx, ny, b_upper, pml_nswe)
-            epsfunc = make_pml_epsfunc(
-                self._n_at_bounded,
-                w,
-                h,
-                wavelength_um,
-                b_upper,
-                meta["d_north_um"],
-                meta["d_south_um"],
-                meta["d_east_um"],
-                meta["d_west_um"],
-                m=pml_m,
-                R=pml_R,
+            x_real, y_real, meta = extend_vertex_axes(
+                w, h, nx, ny, b_upper, pml_nswe,
+            )
+            x, y = make_pml_complex_grid(
+                x_real, y_real, w, h, wavelength_um, b_upper,
+                meta["d_north_um"], meta["d_south_um"],
+                meta["d_east_um"], meta["d_west_um"],
+                m=pml_m, R=pml_R,
                 sigma_max_geom_override=pml_sigma_max_geom,
             )
+            epsfunc = self._make_epsfunc_bounded()
         else:
             x = np.linspace(0.0, w, nx)
             y = np.linspace(0.0, h, ny)
+            x_real = x
+            y_real = y
             epsfunc = self._make_epsfunc()
 
         # Conformal equivalent-index transformation for bent waveguides.
-        # Purely a preprocessing step on epsfunc; commutes with the PML
-        # complex-stretching factor, so both paths above are handled the same.
         bend = self._active_bend()
         if bend is not None:
             R_m, x0_um, formula = bend
@@ -568,6 +633,14 @@ class Waveguide:
             self._solver = fd_solver
             self._vectorial = True
             self._solver_backend = "vfd"
+        elif use_pml:
+            fd_solver = _svfd_solve_pml(
+                wavelength_um, x, y, epsfunc, b_empy,
+                fd_method, neigs, tol, guess,
+            )
+            self._solver = fd_solver
+            self._vectorial = False
+            self._solver_backend = "svfd"
         else:
             fd_solver = SVFDModeSolver(
                 wavelength_um, x, y, epsfunc, b_empy, method=fd_method
@@ -577,8 +650,8 @@ class Waveguide:
             self._solver_backend = "svfd"
 
         self._wl_um = wavelength_um
-        self._x = x
-        self._y = y
+        self._x = np.real(x_real) if np.iscomplexobj(x_real) else x_real
+        self._y = np.real(y_real) if np.iscomplexobj(y_real) else y_real
         return self
 
     @property
