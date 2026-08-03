@@ -3,7 +3,7 @@
 I wanted a unified waveguide mode solver, with a single user interface, but which could execute various freely available python modesolvers.
 This electromagnetic waveguide modesolver utilizes the [CAMFR waveguide generation interface](https://github.com/demisjohn/CAMFR#brief-example), but allows the use of the [EMpy modesolvers](https://github.com/lbolla/EMpy) with the same simple interface.
 
-Almost entirely vibe-coded using Cursor & various LLM's in spare time, to solve a specific problem.
+Almost entirely vibe-coded using Cursor & various LLM's in spare time, to solve a specific problem. ***I have no intention of maintaining this repo*** nor significantly improving it - go ahead and copy/have at it in your own repo!
 
 # Installation
 
